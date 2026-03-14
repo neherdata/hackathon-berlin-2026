@@ -1,5 +1,6 @@
 // ============================================================
 // LLM FRAMEWORK — base primitives for all model calls
+// Global concurrency queue + retry on 429/5xx
 // Shared by all modules. Depends on: CONFIG, state, log(), updateInstrument()
 // ============================================================
 
@@ -20,39 +21,66 @@ function llmRelease() {
   }
 }
 
-// --- llmCall: single model, single response (queued) ---
-async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024, quiet = false } = {}) {
+// --- llmCall: queued + auto-retry on 429/5xx ---
+async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024, quiet = false, _retries = 2 } = {}) {
   await llmAcquire();
-  const t0 = Date.now();
-  updateInstrument({ model });
-  if (!quiet) log(`[${LLM_QUEUE.active}/${LLM_QUEUE.max}] ${model.split('/').pop()}...`, { model });
-
   try {
-  const res = await fetch(`${CONFIG.featherless.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${CONFIG.featherless.apiKey}`,
-    },
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    log(`ERROR: ${res.status} — ${err}`, { model });
-    throw new Error(`Featherless ${res.status}: ${err}`);
+    return await _llmFetch(model, messages, { temperature, maxTokens, quiet, _retries });
+  } finally {
+    llmRelease();
   }
+}
 
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content || '';
-  const usage = data.usage?.total_tokens || 0;
-  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+async function _llmFetch(model, messages, { temperature, maxTokens, quiet, _retries }) {
+  for (let attempt = 0; attempt <= _retries; attempt++) {
+    const t0 = Date.now();
+    updateInstrument({ model });
+    if (!quiet) log(`[${LLM_QUEUE.active}/${LLM_QUEUE.max}] ${model.split('/').pop()}${attempt > 0 ? ` (retry ${attempt})` : ''}...`, { model });
 
-  updateInstrument({ model, tokens: usage });
-  if (!quiet) log(`Response in ${elapsed}s`, { model, tokens: usage });
+    try {
+      const res = await fetch(`${CONFIG.featherless.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${CONFIG.featherless.apiKey}`,
+        },
+        body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+      });
 
-  return { content, usage, elapsed, model };
-  } finally { llmRelease(); }
+      if (res.status === 429 || res.status >= 500) {
+        const err = await res.text();
+        log(`${res.status} — retrying in ${(attempt + 1)}s...`, { model });
+        if (attempt < _retries) {
+          await new Promise(r => setTimeout(r, (attempt + 1) * 1000));
+          continue;
+        }
+        throw new Error(`Featherless ${res.status}: ${err}`);
+      }
+
+      if (!res.ok) {
+        const err = await res.text();
+        log(`ERROR: ${res.status} — ${err}`, { model });
+        throw new Error(`Featherless ${res.status}: ${err}`);
+      }
+
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content || '';
+      const usage = data.usage?.total_tokens || 0;
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+
+      updateInstrument({ model, tokens: usage });
+      if (!quiet) log(`Response in ${elapsed}s`, { model, tokens: usage });
+
+      return { content, usage, elapsed, model };
+    } catch (e) {
+      if (attempt < _retries && (e.message.includes('fetch') || e.message.includes('network'))) {
+        log(`Network error, retry ${attempt + 1}...`, { model });
+        await new Promise(r => setTimeout(r, (attempt + 1) * 1000));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 // --- llmJSON: call + extract + parse JSON, with retry ---
@@ -76,7 +104,6 @@ async function llmJSON(model, messages, { temperature = 0.8, maxTokens = 512, re
 }
 
 // --- llmFanOut: hit N models with concurrency limit, collect successes ---
-// Featherless allows 4 concurrent connections — this pools requests
 async function llmFanOut(models, messages, { temperature = 0.9, maxTokens = 512, parseJSON = false, concurrency = 3 } = {}) {
   log(`Fan-out across ${models.length} models (max ${concurrency} concurrent)...`);
   const fn = parseJSON ? llmJSON : llmCall;
@@ -96,59 +123,11 @@ async function llmFanOut(models, messages, { temperature = 0.9, maxTokens = 512,
     }
   }
 
-  // Launch N workers that pull from the queue
   await Promise.all(Array.from({ length: Math.min(concurrency, models.length) }, () => worker()));
 
   const successes = results.filter(r => r && (parseJSON ? r.parsed !== null : r.content));
   log(`Fan-out: ${successes.length}/${models.length} succeeded`);
   return successes;
-}
-
-// --- llmStream: streaming call for OVERDRIVE build log ---
-async function llmStream(model, messages, { temperature = 0.7, maxTokens = 2048, onChunk } = {}) {
-  updateInstrument({ model });
-  log(`Streaming from ${model.split('/').pop()}...`, { model });
-
-  const res = await fetch(`${CONFIG.featherless.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${CONFIG.featherless.apiKey}`,
-    },
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: true }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Featherless stream ${res.status}: ${err}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let full = '';
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-    for (const line of lines) {
-      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
-      try {
-        const chunk = JSON.parse(line.slice(6));
-        const delta = chunk.choices?.[0]?.delta?.content || '';
-        if (delta) {
-          full += delta;
-          if (onChunk) onChunk(delta, full);
-        }
-      } catch {}
-    }
-  }
-
-  log(`Stream complete (${full.length} chars)`, { model });
-  return { content: full, model };
 }
 
 // --- llmPick: choose best model for a task ---
