@@ -350,6 +350,23 @@ const CONFIG = {
     rate: 1.0,
     pitch: 1.0,
   },
+  elevenlabs: {
+    apiKey: 'sk_082a715f0fed371a8d0653a2fa9b4cbd55d0aba01087c444',
+    baseUrl: 'https://api.elevenlabs.io/v1',
+    model: 'eleven_multilingual_v2',
+    enabled: true,  // set false to force Web Speech fallback
+    // Voice assignments — ElevenLabs pre-made voice IDs
+    // Browse more at: https://elevenlabs.io/voice-library
+    voices: {
+      boo:    'onwK4e9ZLuTAKqWW03F9',  // Daniel — deep, dramatic MC
+      carla:  'EXAVITQu4vr4xnSDxMaL',  // Sarah — professional female
+      rod:    'TX3LPaxmHKxFdv7VOQHJ',  // Liam — authoritative male
+      dan:    'pFZP5JQG7iQjIQuC4Bku',  // Lily — energetic
+      ghost:  'IKne3meq5aSn9XLyUdCD', // Charlie — narrator
+      chaos1: 'XB0fDUnXU5powFXDhCwa',  // Charlotte — expressive
+      chaos2: 'iP95p4xoKVk53GoZ742B',  // Chris — character
+    },
+  },
   needle: {
     apiKey: 'apk_01KKNT8MKM949HHQNA0BMDQ9SR',
     baseUrl: 'https://api.needle.app/v1',
@@ -454,8 +471,37 @@ function updateInstrument({ model, tokens } = {}) {
 }
 
 // ============================================================
-// TTS (Web Speech API)
+// TTS — ElevenLabs first, Web Speech API fallback
 // ============================================================
+
+// ElevenLabs TTS — returns audio blob, plays it
+async function elevenLabsSpeak(text, voiceId) {
+  const res = await fetch(`${CONFIG.elevenlabs.baseUrl}/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'xi-api-key': CONFIG.elevenlabs.apiKey,
+    },
+    body: JSON.stringify({
+      text,
+      model_id: CONFIG.elevenlabs.model,
+      voice_settings: { stability: 0.4, similarity_boost: 0.8, style: 0.6, speed: 1.1 },
+    }),
+  });
+
+  if (!res.ok) throw new Error(`ElevenLabs ${res.status}`);
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  return new Promise((resolve) => {
+    const audio = new Audio(url);
+    audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+    audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+    audio.play();
+  });
+}
+
+// Web Speech fallback
 function getVoices() {
   return new Promise(resolve => {
     const voices = speechSynthesis.getVoices();
@@ -464,7 +510,7 @@ function getVoices() {
   });
 }
 
-async function speak(text, { voiceIndex = 0, rate = CONFIG.tts.rate, pitch = CONFIG.tts.pitch } = {}) {
+async function webSpeechSpeak(text, { voiceIndex = 0, rate = CONFIG.tts.rate, pitch = CONFIG.tts.pitch } = {}) {
   return new Promise(async (resolve) => {
     const voices = await getVoices();
     const utterance = new SpeechSynthesisUtterance(text);
@@ -475,6 +521,22 @@ async function speak(text, { voiceIndex = 0, rate = CONFIG.tts.rate, pitch = CON
     utterance.onerror = resolve;
     speechSynthesis.speak(utterance);
   });
+}
+
+// Unified speak — tries ElevenLabs, falls back to Web Speech
+async function speak(text, { voiceIndex = 0, rate = CONFIG.tts.rate, pitch = CONFIG.tts.pitch, elVoice } = {}) {
+  // Try ElevenLabs if enabled and voice ID provided
+  if (CONFIG.elevenlabs.enabled && elVoice) {
+    try {
+      log(`ElevenLabs: ${elVoice}`, { model: 'elevenlabs' });
+      await elevenLabsSpeak(text, elVoice);
+      return;
+    } catch (e) {
+      log(`ElevenLabs failed (${e.message}), falling back to Web Speech`);
+    }
+  }
+  // Fallback to Web Speech
+  await webSpeechSpeak(text, { voiceIndex, rate, pitch });
 }
 
 // ============================================================

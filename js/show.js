@@ -16,7 +16,7 @@ const BOO = {
 };
 
 async function booSpeak(text) {
-  await speak(text, { voiceIndex: BOO.voiceIdx, rate: BOO.rate, pitch: BOO.pitch });
+  await speak(text, { voiceIndex: BOO.voiceIdx, rate: BOO.rate, pitch: BOO.pitch, elVoice: CONFIG.elevenlabs.voices.boo });
 }
 
 async function booJudge(ghost, crowdScore) {
@@ -99,7 +99,7 @@ async function judgeGhost(ghost, crowdScore, round = 1) {
 
     card.querySelector('.verdict').textContent = content;
     setPhase('judging', `JUDGE: ${judge.name.toUpperCase()}`);
-    await speak(content, { voiceIndex: judge.voiceIdx, rate: 1.2 });
+    await speak(content, { voiceIndex: judge.voiceIdx, rate: 1.2, elVoice: CONFIG.elevenlabs.voices[judge.key] });
   }
 
   // Round 2: summon chaos judges
@@ -119,7 +119,8 @@ async function judgeGhost(ghost, crowdScore, round = 1) {
 
       card.querySelector('.verdict').textContent = content;
       setPhase('judging', `CHAOS: ${chaos.name.toUpperCase()}`);
-      await speak(content, { voiceIndex: chaos.voiceIdx, rate: 1.3 });
+      const chaosVoiceKey = chaosJudges.indexOf(chaos) === 0 ? 'chaos1' : 'chaos2';
+      await speak(content, { voiceIndex: chaos.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[chaosVoiceKey] });
     }
   }
 }
@@ -174,7 +175,7 @@ async function overdrive(ghost) {
   buildLog('Waiting for agent to build and deploy...');
   buildLog(`Target: https://${ghost.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${CONFIG.overdrive.deployDomain}`);
 
-  await speak(`Overdrive engaged. Building ${ghost.name}. Stand by.`, { rate: 0.9, pitch: 0.7 });
+  await speak(`Overdrive engaged. Building ${ghost.name}. Stand by.`, { rate: 0.9, pitch: 0.7, elVoice: CONFIG.elevenlabs.voices.boo });
 }
 
 // --- MAIN SHOW FLOW ---
@@ -208,7 +209,7 @@ async function runShow() {
     dom.ghostPitch.textContent = ghost.pitch;
     log(`Ghost ${i + 1}/${state.ghosts.length}: ${ghost.name}`);
 
-    await speak(`I am ${ghost.name}. ${ghost.pitch}`, { voiceIndex: (i * 2 + 1) % 8, rate: 1.15 });
+    await speak(`I am ${ghost.name}. ${ghost.pitch}`, { voiceIndex: (i * 2 + 1) % 8, rate: 1.15, elVoice: CONFIG.elevenlabs.voices.ghost });
 
     // Crowd #1
     const crowd1 = await listenToCrowd();
