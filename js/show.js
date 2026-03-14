@@ -194,6 +194,16 @@ async function runShow() {
   dom.btnSkip.style.display = 'inline-block';
   await initMic();
 
+  // Show QR immediately so audience can scan while waiting
+  const superchatUrl = `${window.location.origin}/superchat.html`;
+  dom.qrContainer.style.display = 'block';
+  dom.deployUrl.textContent = superchatUrl;
+  if (!dom.qrContainer.querySelector('img')) {
+    const qrImg = document.createElement('img');
+    qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(superchatUrl)}&bgcolor=0a0a0f&color=8b5cf6`;
+    dom.qrContainer.appendChild(qrImg);
+  }
+
   // Dud is precomputed — zero LLM time
   const dud = pickDud();
 
