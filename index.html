@@ -40,15 +40,17 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 20px;
+    padding: 0 16px;
     background: var(--card);
     border-bottom: 1px solid #252530;
-    font-size: 12px;
+    font-size: 11px;
+    gap: 12px;
+    overflow: hidden;
   }
   #header .logo {
     color: var(--ghost);
     font-weight: bold;
-    font-size: 15px;
+    font-size: 13px;
     letter-spacing: 1px;
     flex-shrink: 0;
   }
@@ -351,25 +353,19 @@
   @keyframes bannerSlide { from { transform: translateY(100%); } to { transform: translateY(0); } }
   #feedback-banner.visible { display: flex; animation: bannerSlide 0.4s ease-out; }
 
-  /* ===== TRANSCRIPT LOG — fixed bottom-right overlay ===== */
+  /* ===== TRANSCRIPT LOG — bottom of sidebar ===== */
   #transcript {
-    position: fixed;
-    bottom: 0;
-    right: 0;
-    width: 380px;
-    height: var(--log-h);
+    flex: 1;
+    min-height: 60px;
+    max-height: 200px;
     background: rgba(12, 12, 20, 0.92);
-    border-top: 1px solid #1e1e28;
-    border-left: 1px solid #1e1e28;
-    border-top-left-radius: 8px;
+    border: 1px solid #1e1e28;
+    border-radius: 8px;
     padding: 8px 10px;
-    font-size: 11px;
+    font-size: 10px;
     overflow-y: auto;
     color: var(--dim);
-    line-height: 1.7;
-    z-index: 50;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    line-height: 1.6;
   }
   #transcript .log-entry { display: block; }
   #transcript .log-entry .ts { color: #3a3a50; margin-right: 6px; }
@@ -481,12 +477,12 @@
       <div class="fb-url" id="feedback-url"></div>
     </div>
 
+      <!-- Transcript log — in sidebar -->
+    <div id="transcript"></div>
+
   </div>
 
 </div>
-
-<!-- ===== TRANSCRIPT LOG (fixed bottom-right) ===== -->
-<div id="transcript"></div>
 
 <script>
 // ============================================================
