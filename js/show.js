@@ -204,17 +204,25 @@ async function runShow() {
 
   // === GEN buildable pitch (fastest model) + INTRO TTS (parallel) ===
   setPhase('intro', 'SUMMONING');
+  // Fire buildable gen + roast precompute in parallel
   let buildable, buildPromise, judgeVerdictsPromise;
+  const roastJudge = CONFIG.judges[Math.floor(Math.random() * CONFIG.judges.length)];
   const buildablePromise = generateBuildable().then(b => {
     buildable = b;
     state.ghosts = [dud, b];
-    // Show banner with real idea immediately when ready
     showFeedbackBanner(b);
-    // Kick off build + judges immediately
     buildPromise = buildProject(b);
     judgeVerdictsPromise = precomputeJudgeVerdicts(b);
     return b;
   });
+  const roastPromise = llmCall(
+    llmPick('fast'),
+    [
+      { role: 'system', content: `You are ${roastJudge.name}. Roast this terrible idea. ONE sentence, max 10 words.` },
+      { role: 'user', content: `"${dud.name}" — ${dud.pitch}` },
+    ],
+    { temperature: 0.9, maxTokens: 20 }
+  );
   await booSpeak("Welcome mortals. Let the haunting begin.");
   await buildablePromise;
 
@@ -226,17 +234,9 @@ async function runShow() {
   dom.ghostPitch.textContent = dud.pitch;
   await shortSpeak(`I am ${dud.name}. ${dud.pitch}`, 6, { voiceIndex: 1, rate: 1.2, elVoice: CONFIG.elevenlabs.voices.ghost });
 
-  // === ROAST ===
+  // === ROAST (already precomputed) ===
   setPhase('roast', 'REJECTED');
-  const roastJudge = CONFIG.judges[Math.floor(Math.random() * CONFIG.judges.length)];
-  const { content: roast } = await llmCall(
-    llmPick('fast'),
-    [
-      { role: 'system', content: `You are ${roastJudge.name}. Roast this terrible idea. ONE sentence, max 10 words.` },
-      { role: 'user', content: `"${dud.name}" — ${dud.pitch}` },
-    ],
-    { temperature: 0.9, maxTokens: 20 }
-  );
+  const { content: roast } = await roastPromise;
   await shortSpeak(roast, 4, { voiceIndex: roastJudge.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[roastJudge.key] });
 
   // === WAIT FOR BUILD ===
