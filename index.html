@@ -310,6 +310,47 @@
     max-width: 120px;
   }
 
+  /* Feedback banner — appears after dud rejection */
+  #feedback-banner {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(180deg, rgba(139,92,246,0.15) 0%, rgba(10,10,15,0.95) 100%);
+    border-top: 2px solid var(--ghost);
+    padding: 14px 24px;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 20;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  #feedback-banner .fb-text {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: bold;
+  }
+  #feedback-banner .fb-text small {
+    display: block;
+    color: var(--dim);
+    font-size: 11px;
+    font-weight: normal;
+    margin-top: 2px;
+  }
+  #feedback-banner .fb-url {
+    color: var(--ghost);
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    background: var(--card);
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--ghost);
+  }
+  @keyframes bannerSlide { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  #feedback-banner.visible { display: flex; animation: bannerSlide 0.4s ease-out; }
+
   /* ===== TRANSCRIPT LOG — fixed bottom-right overlay ===== */
   #transcript {
     position: fixed;
@@ -427,10 +468,17 @@
     <!-- Demo iframe — hidden until show.js calls showDemo() -->
     <iframe id="demo-frame" class="hidden"></iframe>
 
-    <!-- QR code overlay — top-right corner.
-         show.js sets display:block, sets deploy-url text, and appends an <img> child -->
+    <!-- QR code overlay — top-right corner -->
     <div id="qr-container">
       <p id="deploy-url"></p>
+    </div>
+
+    <!-- Feedback banner — slides up after dud is rejected -->
+    <div id="feedback-banner">
+      <div class="fb-text">
+        FEEDBACK OPEN <small>Tell us what to build into the real pitch</small>
+      </div>
+      <div class="fb-url" id="feedback-url"></div>
     </div>
 
   </div>
