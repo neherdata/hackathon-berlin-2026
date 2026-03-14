@@ -50,9 +50,9 @@ async function buildProject(ghost) {
   log('BUILD: Generating project code...');
   const buildHint = ghost.buildHint || ghost.pitch;
   const result = await llmCall(llmPick('reason'), [
-    { role: 'system', content: 'Generate a COMPLETE single-page web app as one HTML file. CDN deps OK (Leaflet, Chart.js, D3). Real data, dark theme, interactive. Return ONLY HTML, no markdown.' },
-    { role: 'user', content: `Build: ${ghost.name} — ${ghost.pitch}\nHint: ${buildHint}\nBerlin-themed. Dark theme (#0a0a0f). Interactive. Single HTML file.` },
-  ], { temperature: 0.7, maxTokens: 3072 });
+    { role: 'system', content: 'Generate a COMPACT single-page web app as one HTML file. CDN deps OK (Leaflet, Chart.js). Minimal but functional, dark theme, interactive. Return ONLY HTML, no markdown. Keep it SHORT.' },
+    { role: 'user', content: `Build: ${ghost.name} — ${ghost.pitch}\nHint: ${buildHint}\nBerlin-themed. Dark #0a0a0f. Interactive. COMPACT single HTML.` },
+  ], { temperature: 0.7, maxTokens: 2048 });
   return result.content;
 }
 
@@ -78,7 +78,7 @@ async function rebuildWithFeedback(ghost, originalCode, judgeFeedback, superchat
   const result = await llmCall(llmPick('reason'), [
     { role: 'system', content: 'Update this web app with the feedback. Return ONLY complete updated HTML, no markdown.' },
     { role: 'user', content: `App: ${ghost.name}\nFeedback:\n${selectedFeedback}\n\nCode:\n${originalCode}` },
-  ], { temperature: 0.7, maxTokens: 3072 });
+  ], { temperature: 0.7, maxTokens: 2048 });
   return { code: result.content, incorporated };
 }
 
