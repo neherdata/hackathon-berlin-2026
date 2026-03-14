@@ -94,6 +94,27 @@ function showIncorporated(items) {
 }
 
 // --- USERMAP ---
+let _usermapCount = 0;
+function showUserMapWidget() {
+  const w = document.getElementById('usermap-widget');
+  if (w) w.classList.remove('hidden');
+}
+function updateUserMapWidget(text, source) {
+  _usermapCount++;
+  const countEl = document.getElementById('usermap-count');
+  const dotEl = document.getElementById('usermap-dot');
+  const feedEl = document.getElementById('usermap-feed');
+  if (countEl) countEl.textContent = _usermapCount;
+  if (dotEl) { dotEl.style.background = '#22c55e'; setTimeout(() => dotEl.style.background = '#444', 600); }
+  if (feedEl) {
+    const entry = document.createElement('div');
+    entry.style.cssText = 'margin:2px 0;opacity:0;transition:opacity 0.3s';
+    entry.innerHTML = `<b style="color:var(--ghost)">${source}</b>: ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`;
+    feedEl.prepend(entry);
+    requestAnimationFrame(() => entry.style.opacity = '1');
+    while (feedEl.children.length > 5) feedEl.lastChild.remove();
+  }
+}
 async function pushToUserMap(text, name = 'audience') {
   if (!CONFIG.usermap?.enabled) return;
   try {
@@ -102,6 +123,7 @@ async function pushToUserMap(text, name = 'audience') {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${CONFIG.usermap.apiKey}` },
       body: JSON.stringify({ text, source: name, tags: ['ghost-pitch', 'live-demo'] }),
     });
+    updateUserMapWidget(text, name);
   } catch (e) { log(`UserMap: ${e.message}`); }
 }
 
@@ -214,7 +236,8 @@ async function runShow() {
   dom.btnSkip.style.display = 'inline-block';
   await initMic();
 
-  // Show QR immediately so audience can scan while waiting
+  // Show QR + UserMap widget immediately
+  showUserMapWidget();
   const superchatUrl = `${window.location.origin}/superchat.html`;
   dom.qrContainer.style.display = 'block';
   dom.deployUrl.textContent = superchatUrl;

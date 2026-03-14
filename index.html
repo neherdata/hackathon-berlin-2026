@@ -441,6 +441,16 @@
     <!-- Judge panel — judge cards injected here by show.js -->
     <div class="judge-panel hidden" id="judge-panel"></div>
 
+    <!-- UserMap sponsor widget -->
+    <div id="usermap-widget" class="hidden" style="background:var(--card);border:1px solid #252530;border-radius:8px;padding:10px 12px;flex-shrink:0;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <div id="usermap-dot" style="width:8px;height:8px;border-radius:50%;background:#444;transition:background 0.3s"></div>
+        <span style="color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:bold">UserMap</span>
+        <span id="usermap-count" style="color:var(--text);font-size:14px;font-weight:bold;margin-left:auto">0</span>
+      </div>
+      <div id="usermap-feed" style="color:var(--dim);font-size:10px;max-height:60px;overflow-y:auto"></div>
+    </div>
+
     <!-- Superchat stats -->
     <div id="superchat-stats" class="hidden"></div>
 
