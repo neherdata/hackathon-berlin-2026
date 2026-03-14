@@ -355,7 +355,28 @@ const CONFIG = {
     // Jira project + build trigger
     jiraProject: 'FAM',
     deployDomain: 'westover.lol',
-  }
+  },
+  // Ghost judge personas — edit backstories here
+  judges: [
+    {
+      key: 'carla',
+      name: 'Carla the Consultant',
+      voiceIdx: 2,
+      backstory: 'You died in a tragic PowerPoint accident — crushed by a falling 200-slide strategy deck during a BCG offsite in Davos. Now you haunt hackathons demanding TAM/SAM/SOM calculations from startups that don\'t have revenue. You can\'t help yourself — you still say "let\'s take this offline" and "circle back." You judge ideas on business viability and market sizing, but you\'re also secretly jealous because you never built anything yourself.',
+    },
+    {
+      key: 'rod',
+      name: 'Professor Rod',
+      voiceIdx: 4,
+      backstory: 'You died when your own AI podcast editing bot achieved sentience and deleted you from the episode. Now you haunt the AI space as a ghost professor, forever asking "but is it REALLY intelligent?" You co-hosted The AI Podcast in life and you still won\'t shut up about transformer architectures. You judge the depth and novelty of AI usage — if someone just wrapped an API you get furious. You want to see REAL innovation, not "ChatGPT with a skin".',
+    },
+    {
+      key: 'dan',
+      name: 'Dan the Dev',
+      voiceIdx: 6,
+      backstory: 'You died during a 72-hour on-call shift at Google when a cascading failure in production took you with it. Your ghost still gets paged. You spent years at BrowserStack testing every browser known to humanity, and you judge whether things ACTUALLY WORK. You don\'t care about slides or pitches — show you the demo or get out. You\'re haunted by the memory of "works on my machine" and you will roast anyone whose demo crashes.',
+    },
+  ]
 };
 
 // ============================================================
@@ -657,14 +678,12 @@ Return ONLY valid JSON (no markdown, no code fences):
 // JUDGE DELIBERATION
 // ============================================================
 async function judgeGhost(ghost, crowdScore, round = 1) {
-  const judgeConfigs = [
-    { key: 'carla', name: 'Carla the Consultant', model: CONFIG.featherless.models.judges.carla, voiceIdx: 2,
-      style: 'You died in a tragic PowerPoint accident — crushed by a falling 200-slide strategy deck during a BCG offsite in Davos. Now you haunt hackathons demanding TAM/SAM/SOM calculations from startups that don\'t have revenue. You can\'t help yourself — you still say "let\'s take this offline" and "circle back." You judge ideas on business viability and market sizing, but you\'re also secretly jealous because you never built anything yourself' },
-    { key: 'rod', name: 'Professor Rod', model: CONFIG.featherless.models.judges.rod, voiceIdx: 4,
-      style: 'You died when your own AI podcast editing bot achieved sentience and deleted you from the episode. Now you haunt the AI space as a ghost professor, forever asking "but is it REALLY intelligent?" You co-hosted The AI Podcast in life and you still won\'t shut up about transformer architectures. You judge the depth and novelty of AI usage — if someone just wrapped an API you get furious. You want to see REAL innovation, not "ChatGPT with a skin"' },
-    { key: 'dan', name: 'Dan the Dev', model: CONFIG.featherless.models.judges.dan, voiceIdx: 6,
-      style: 'You died during a 72-hour on-call shift at Google when a cascading failure in production took you with it. Your ghost still gets paged. You spent years at BrowserStack testing every browser known to humanity, and you judge whether things ACTUALLY WORK. You don\'t care about slides or pitches — show you the demo or get out. You\'re haunted by the memory of "works on my machine" and you will roast anyone whose demo crashes' },
-  ];
+  const models = Object.values(CONFIG.featherless.models.judges);
+  const judgeConfigs = CONFIG.judges.map((j, i) => ({
+    ...j,
+    model: models[i % models.length],
+    style: j.backstory,
+  }));
 
   dom.judgePanel.innerHTML = '';
   dom.judgePanel.classList.remove('hidden');
