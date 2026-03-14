@@ -268,6 +268,7 @@
     Model: <span id="i-model">—</span>
     Tokens: <span id="i-tokens">0</span>
     Elapsed: <span id="i-elapsed">0.0s</span>
+    Left: <span id="i-remaining" style="color: var(--warn)">2:30</span>
   </div>
 </div>
 
@@ -441,6 +442,7 @@ const dom = {
   iModel:      $('#i-model'),
   iTokens:     $('#i-tokens'),
   iElapsed:    $('#i-elapsed'),
+  iRemaining:  $('#i-remaining'),
   btnStart:    $('#btn-start'),
   btnOverdrive:$('#btn-overdrive'),
   btnSkip:     $('#btn-skip'),
@@ -636,7 +638,15 @@ dom.btnOverdrive.addEventListener('click', () => {
 });
 dom.btnSkip.addEventListener('click', () => speechSynthesis.cancel());
 setInterval(() => {
-  if (state.startTime) dom.iElapsed.textContent = ((Date.now() - state.startTime) / 1000).toFixed(1) + 's';
+  if (state.startTime) {
+    const elapsed = (Date.now() - state.startTime) / 1000;
+    dom.iElapsed.textContent = elapsed.toFixed(1) + 's';
+    const left = Math.max(0, 150 - elapsed);
+    const min = Math.floor(left / 60);
+    const sec = Math.floor(left % 60);
+    dom.iRemaining.textContent = `${min}:${sec.toString().padStart(2, '0')}`;
+    if (left < 30) dom.iRemaining.style.color = 'var(--danger)';
+  }
 }, 100);
 </script>
 
