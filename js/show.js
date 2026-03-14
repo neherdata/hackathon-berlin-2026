@@ -46,15 +46,41 @@ async function shortSpeak(text, maxSec, opts = {}) {
 }
 
 // --- BUILD ENGINE ---
-async function buildProject(ghost) {
+async function buildProject(ghost, deadlineMs = 45000) {
   log('BUILD: Generating project code...');
   const buildHint = ghost.buildHint || ghost.pitch;
-  const result = await llmCall(llmPick('reason'), [
+  const buildCall = llmCall(llmPick('reason'), [
     { role: 'system', content: 'Generate a COMPACT single-page web app as one HTML file. CDN deps OK (Leaflet, Chart.js). Minimal but functional, dark theme, interactive. Return ONLY HTML, no markdown. Keep it SHORT.' },
     { role: 'user', content: `Build: ${ghost.name} — ${ghost.pitch}\nHint: ${buildHint}\nBerlin-themed. Dark #0a0a0f. Interactive. COMPACT single HTML.` },
   ], { temperature: 0.7, maxTokens: 2048 });
-  return result.content;
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('BUILD TIMEOUT')), deadlineMs));
+  try {
+    const result = await Promise.race([buildCall, timeout]);
+    return result.content;
+  } catch (e) {
+    log(`BUILD: ${e.message} — using fallback`);
+    return FALLBACK_BUILD;
+  }
 }
+
+const FALLBACK_BUILD = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ghost App</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a0f;color:#e0e0e0;font-family:monospace}
+#map{height:100vh;width:100%}.leaflet-popup-content{color:#0a0a0f}</style></head><body>
+<div id="map"></div><script>
+const map=L.map('map').setView([52.52,13.405],12);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'Ghost Map'}).addTo(map);
+const spots=[{n:'Berghain',c:[52.5112,13.4428],d:'The eternal queue'},
+{n:'Tempelhof',c:[52.4731,13.4019],d:'Ghost runway'},
+{n:'Alexanderplatz',c:[52.5219,13.4132],d:'TV Tower spirits'},
+{n:'Kreuzberg',c:[52.4894,13.4025],d:'Startup graveyard'},
+{n:'Friedrichshain',c:[52.5159,13.4544],d:'East side ghosts'},
+{n:'Mitte',c:[52.5200,13.4050],d:'Museum Island phantoms'},
+{n:'Neukölln',c:[52.4812,13.4345],d:'Underground scene'},
+{n:'Prenzlauer Berg',c:[52.5388,13.4244],d:'Gentrification ghosts'}];
+spots.forEach(s=>L.marker(s.c).addTo(map).bindPopup('<b>'+s.n+'</b><br>'+s.d));
+<\/script></body></html>`;
 
 function showDemo(html) {
   const iframe = document.getElementById('demo-frame');
@@ -259,9 +285,10 @@ async function runShow() {
     buildable = b;
     state.ghosts = [dud, b];
     showFeedbackBanner(b);
-    buildPromise = buildProject(b);
+    buildPromise = buildProject(b, 45000);  // 45s deadline
     judgeVerdictsPromise = precomputeJudgeVerdicts(b);
     startSuperchatPoll(feedbackSince);
+    log(`BUILD CLOCK: 45s deadline started`);
     return b;
   });
   const roastPromise = llmCall(
@@ -319,21 +346,16 @@ async function runShow() {
   setPhase('reveal', 'LIVE DEMO');
   showDemo(builtCode);
 
-  // === COLLECT FEEDBACK — don't block, grab what's there ===
+  // === COLLECT FEEDBACK ===
   stopSuperchatPoll();
   const superchatMessages = await fetchSuperchat(feedbackSince);
   showSuperchatStats(superchatMessages);
-  const superchatText = formatSuperchat(superchatMessages);
   for (const v of judgeVerdicts) pushToUserMap(v, 'judge');
 
-  // === REBUILD with feedback — the payoff ===
-  setPhase('rebuilding', 'INCORPORATING FEEDBACK');
-  const { code: updatedCode, incorporated } = await rebuildWithFeedback(buildable, builtCode, judgeFeedback, superchatText);
-  log(`REBUILD: ${incorporated.length} incorporated`);
-  showDemo(updatedCode);
-
-  // === DONE ===
+  // === DONE — no rebuild, ship what we built ===
   setPhase('done', 'SHOW COMPLETE');
-  log(`Done in ${((Date.now() - state.startTime) / 1000).toFixed(0)}s`);
+  const totalSec = ((Date.now() - state.startTime) / 1000).toFixed(0);
+  log(`Done in ${totalSec}s`);
+  await booSpeak(`Done. Built live in ${totalSec} seconds. Ghost redeemed.`);
   await booSpeak("Done. Built live. Ghost redeemed.");
 }
