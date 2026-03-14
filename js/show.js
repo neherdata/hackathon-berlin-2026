@@ -144,33 +144,31 @@ function showFeedbackBanner(ghost) {
 async function showJudgeFeedback(precomputedVerdicts) {
   dom.judgePanel.innerHTML = '';
   dom.judgePanel.classList.remove('hidden');
-  const feedbacks = [];
-  for (let i = 0; i < CONFIG.judges.length; i++) {
-    const judge = CONFIG.judges[i];
-    const verdict = precomputedVerdicts[i] || 'No comment.';
-    const card = document.createElement('div');
-    card.className = 'judge-card';
-    card.innerHTML = `<h3>${judge.name}</h3><div class="verdict">${verdict}</div>`;
-    dom.judgePanel.appendChild(card);
-    feedbacks.push({ judge, content: verdict });
-  }
-  const { judge, content } = feedbacks[0];
-  await shortSpeak(content, 5, { voiceIndex: judge.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[judge.key] });
-  return feedbacks.map(f => `${f.judge.name}: "${f.content}"`).join('\n');
+  const idx = state._activeJudgeIdx || 0;
+  const judge = CONFIG.judges[idx];
+  const verdict = precomputedVerdicts[0] || 'No comment.';
+  const card = document.createElement('div');
+  card.className = 'judge-card';
+  card.innerHTML = `<h3>${judge.name}</h3><div class="verdict">${verdict}</div>`;
+  dom.judgePanel.appendChild(card);
+  await shortSpeak(verdict, 5, { voiceIndex: judge.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[judge.key] });
+  return `${judge.name}: "${verdict}"`;
 }
 
 async function precomputeJudgeVerdicts(ghost) {
-  log('Precomputing judge feedback (1 judge)...');
-  const judge = CONFIG.judges[0];
-  const model = Object.values(CONFIG.featherless.models.judges)[0];
+  const idx = Math.floor(Math.random() * CONFIG.judges.length);
+  const judge = CONFIG.judges[idx];
+  log(`Precomputing judge: ${judge.name}...`);
   const verdicts = [];
   try {
-    const { content } = await llmCall(model, [
+    const { content } = await llmCall(llmPick('fast'), [
       { role: 'system', content: `You are ${judge.name}. ${judge.backstory} ONE sentence. Max 12 words.` },
       { role: 'user', content: `Ghost: "${ghost.name}" — ${ghost.pitch}` },
     ], { temperature: 0.8, maxTokens: 25, quiet: true });
     verdicts.push(content);
   } catch { verdicts.push('The spirits are silent.'); }
+  // Fill remaining judge slots so showJudgeFeedback works
+  state._activeJudgeIdx = idx;
   return verdicts;
 }
 
