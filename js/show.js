@@ -106,12 +106,47 @@ function showIncorporated(items) {
     </div>`;
 }
 
-// --- SUPERCHAT: fetch audience feedback ---
+// --- USERMAP: push feedback to UserMap + fetch aggregated ---
+async function pushToUserMap(text, name = 'audience') {
+  if (!CONFIG.usermap?.enabled) return;
+  try {
+    await fetch(`${CONFIG.usermap.baseUrl}/feedback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CONFIG.usermap.apiKey}`,
+      },
+      body: JSON.stringify({ text, source: name, tags: ['ghost-pitch', 'live-demo'] }),
+    });
+  } catch (e) { log(`UserMap push failed: ${e.message}`); }
+}
+
+async function fetchUserMapFeedback() {
+  if (!CONFIG.usermap?.enabled) return [];
+  try {
+    const res = await fetch(`${CONFIG.usermap.baseUrl}/feedback?limit=50`, {
+      headers: { 'Authorization': `Bearer ${CONFIG.usermap.apiKey}` },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.feedback || data.data || data.results || [];
+  } catch (e) {
+    log(`UserMap fetch failed: ${e.message}`);
+    return [];
+  }
+}
+
+// --- SUPERCHAT: fetch audience feedback + sync to UserMap ---
 async function fetchSuperchat() {
   try {
     const res = await fetch('/api/feedback');
     const data = await res.json();
-    return data.recent || [];
+    const messages = data.recent || [];
+    // Push new messages to UserMap
+    for (const msg of messages.slice(-5)) {
+      pushToUserMap(msg.text, msg.name); // fire-and-forget
+    }
+    return messages;
   } catch {
     return [];
   }
@@ -122,36 +157,27 @@ function formatSuperchat(messages) {
   return messages.map(m => `${m.name}: "${m.text}"`).join('\n');
 }
 
-// --- JUDGE FEEDBACK ---
-async function getJudgeFeedback(ghost) {
-  const models = Object.values(CONFIG.featherless.models.judges);
-  const judges = CONFIG.judges.map((j, i) => ({
-    ...j,
-    model: models[i % models.length],
-  }));
-
+// --- JUDGE FEEDBACK (precomputed or live, sequential to respect concurrency) ---
+// If precomputed verdicts are passed, just display + speak them (no LLM calls)
+async function showJudgeFeedback(precomputedVerdicts) {
   dom.judgePanel.innerHTML = '';
   dom.judgePanel.classList.remove('hidden');
 
-  // Fire all judge calls in parallel
-  const feedbackPromises = judges.map(async (judge) => {
+  const judges = CONFIG.judges;
+  const feedbacks = [];
+
+  for (let i = 0; i < judges.length; i++) {
+    const judge = judges[i];
+    const verdict = precomputedVerdicts[i] || 'No comment.';
+
     const card = document.createElement('div');
     card.className = 'judge-card';
-    card.innerHTML = `<h3>${judge.name}</h3><div class="verdict">Thinking...</div>`;
+    card.innerHTML = `<h3>${judge.name}</h3><div class="verdict">${verdict}</div>`;
     dom.judgePanel.appendChild(card);
+    feedbacks.push({ judge, content: verdict });
+  }
 
-    const { content } = await llmCall(judge.model, [
-      { role: 'system', content: `You are ${judge.name}, a ghost judge. ${judge.backstory} Give ONE specific, actionable piece of feedback on this project. What would make it better? ONE sentence, constructive but spicy.` },
-      { role: 'user', content: `Ghost project: "${ghost.name}" — ${ghost.pitch}` },
-    ], { temperature: 0.8, maxTokens: 60 });
-
-    card.querySelector('.verdict').textContent = content;
-    return { judge, content };
-  });
-
-  const feedbacks = await Promise.all(feedbackPromises);
-
-  // Speak 1-2 judges
+  // Speak 1-2 judges sequentially
   const speakCount = showTimeLeft() < 60 ? 1 : Math.min(2, feedbacks.length);
   for (let i = 0; i < speakCount; i++) {
     const { judge, content } = feedbacks[i];
@@ -160,6 +186,30 @@ async function getJudgeFeedback(ghost) {
   }
 
   return feedbacks.map(f => `${f.judge.name}: "${f.content}"`).join('\n');
+}
+
+// Precompute judge verdicts (called during pitch gen, before show needs them)
+async function precomputeJudgeVerdicts(ghost) {
+  log('Precomputing judge feedback...');
+  const models = Object.values(CONFIG.featherless.models.judges);
+  const verdicts = [];
+
+  // Sequential to avoid concurrency issues
+  for (let i = 0; i < CONFIG.judges.length; i++) {
+    const judge = CONFIG.judges[i];
+    const model = models[i % models.length];
+    try {
+      const { content } = await llmCall(model, [
+        { role: 'system', content: `You are ${judge.name}, a ghost judge. ${judge.backstory} Give ONE specific, actionable piece of feedback. ONE sentence, constructive but spicy.` },
+        { role: 'user', content: `Ghost project: "${ghost.name}" — ${ghost.pitch}` },
+      ], { temperature: 0.8, maxTokens: 60, quiet: true });
+      verdicts.push(content);
+    } catch {
+      verdicts.push('The spirits are silent on this one.');
+    }
+  }
+
+  return verdicts;
 }
 
 // --- SHOW SUPERCHAT STATS ---
@@ -175,6 +225,8 @@ function showSuperchatStats(messages) {
 }
 
 // --- MAIN SHOW FLOW ---
+// All LLM calls are sequenced to respect Featherless 4-connection limit
+// Judge verdicts are precomputed during generation to overlap with TTS
 async function runShow() {
   state.startTime = Date.now();
   dom.btnStart.style.display = 'none';
@@ -182,108 +234,106 @@ async function runShow() {
 
   await initMic();
 
-  // === PHASE 1: INTRO + GENERATE ===
+  // === PHASE 1: INTRO (TTS while generating) ===
   setPhase('intro', 'BOO MC');
-  // Generate ghosts AND intro in parallel
-  const [, ghosts] = await Promise.all([
-    booSpeak("Welcome, mortals. A ghost will pitch a terrible idea. We'll roast it. Then we build something REAL. Live. Right now."),
-    generateGhosts(),
-  ]);
 
+  // Boo intro plays while ghosts generate (TTS is not an LLM call)
+  const introPromise = booSpeak("Welcome, mortals. A ghost will pitch a terrible idea. We roast it. Then we build something real. Live. Right now.");
+
+  // Generate dud + buildable SEQUENTIALLY (respect concurrency)
+  await generateGhosts();
   const dud = state.ghosts[0];
   const buildable = state.ghosts[1];
 
-  // === PHASE 2: DUD PITCH + FAST ROAST + PARALLEL BUILD ===
-  // Show dud ghost card
+  // Precompute judge verdicts for the buildable pitch (sequential LLM calls)
+  // These happen while intro TTS may still be playing
+  const judgeVerdictsPromise = precomputeJudgeVerdicts(buildable);
+
+  // Wait for intro to finish
+  await introPromise;
+
+  // === PHASE 2: DUD PITCH + ROAST ===
   setPhase('pitch', 'DUD PITCH');
   dom.ghostCard.classList.remove('hidden');
   dom.ghostName.textContent = dud.name;
   dom.ghostType.textContent = dud.type;
   dom.ghostPitch.textContent = dud.pitch;
 
-  // Start building the REAL project in background (this is the magic)
-  const buildPromise = buildProject(buildable);
-  log('BUILD: Started in background while dud is being roasted...');
-
-  // Ghost pitches the dud
+  // Ghost pitches the dud (TTS — no LLM call)
   await speak(`I am ${dud.name}. ${dud.pitch}`, { voiceIndex: 1, rate: 1.15, elVoice: CONFIG.elevenlabs.voices.ghost });
 
-  // Fast judge roast on the dud
-  setPhase('roast', 'ROASTING THE DUD');
+  // Fast judge roast — 1 LLM call
+  setPhase('roast', 'ROASTING');
   const roastJudge = CONFIG.judges[Math.floor(Math.random() * CONFIG.judges.length)];
   const { content: roast } = await llmCall(
     Object.values(CONFIG.featherless.models.judges)[0],
     [
       { role: 'system', content: `You are ${roastJudge.name}. ${roastJudge.backstory} This idea is TERRIBLE. Roast it in ONE savage sentence.` },
-      { role: 'user', content: `Ghost pitched: "${dud.name}" — ${dud.pitch}. Destroy this idea:` },
+      { role: 'user', content: `Ghost pitched: "${dud.name}" — ${dud.pitch}. Destroy it:` },
     ],
     { temperature: 0.9, maxTokens: 40 }
   );
-  log(`ROAST: ${roast}`);
   await speak(roast, { voiceIndex: roastJudge.voiceIdx, rate: 1.2, elVoice: CONFIG.elevenlabs.voices[roastJudge.key] });
 
-  // Wait for build to finish (should be done by now — we had ~20s of TTS cover)
-  setPhase('building', 'BUILDING...');
-  await booSpeak("But wait. Another ghost has been building something REAL.");
-  let builtCode = await buildPromise;
+  // === PHASE 3: BUILD THE REAL PROJECT ===
+  // Now we have full concurrency budget — build uses 1 call
+  setPhase('building', 'BUILDING LIVE');
+  await booSpeak("But wait. Another ghost has been building something real.");
 
-  // === PHASE 3: REVEAL DEMO + OPEN SUPERCHAT ===
-  setPhase('reveal', 'REVEALING BUILD');
+  // Build the real project (single LLM call — gets full concurrency)
+  let builtCode = await buildProject(buildable);
 
-  // Update ghost card to show buildable pitch
+  // === PHASE 4: REVEAL + SUPERCHAT ===
+  setPhase('reveal', 'LIVE DEMO');
   dom.ghostName.textContent = buildable.name;
   dom.ghostType.textContent = buildable.type;
   dom.ghostPitch.textContent = buildable.pitch;
-
-  // Show the built demo
   showDemo(builtCode);
 
-  // Show superchat QR / link
+  // Show superchat QR
   const superchatUrl = `${window.location.origin}/superchat.html`;
-  log(`Superchat: ${superchatUrl}`);
-  await booSpeak("Mortals! Open your phones. Go to the superchat. Tell us what you think.");
-
-  // Show QR code
   dom.qrContainer.style.display = 'block';
   dom.deployUrl.textContent = superchatUrl;
-  dom.deployUrl.style.fontSize = '14px';
   const qrImg = document.createElement('img');
   qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(superchatUrl)}&bgcolor=0a0a0f&color=8b5cf6`;
   qrImg.alt = 'Superchat QR';
   dom.qrContainer.appendChild(qrImg);
 
-  // Wait for audience feedback (give them time)
+  await booSpeak("Scan the code. Tell us what you think. Your feedback shapes the build.");
+
+  // Wait for audience feedback
   await new Promise(r => setTimeout(r, 8000));
 
-  // === PHASE 4: JUDGES EVALUATE + INCORPORATE FEEDBACK ===
+  // === PHASE 5: JUDGES SPEAK (precomputed) + INCORPORATE FEEDBACK ===
   setPhase('judging', 'JUDGES + FEEDBACK');
 
-  // Fetch superchat feedback
+  // Get precomputed verdicts (should be ready by now)
+  const judgeVerdicts = await judgeVerdictsPromise;
+
+  // Fetch superchat + push to UserMap
   const superchatMessages = await fetchSuperchat();
   showSuperchatStats(superchatMessages);
   const superchatText = formatSuperchat(superchatMessages);
 
-  // Start rebuild with feedback in background (before judges even finish speaking)
-  // Judges evaluate the REAL project — their LLM calls happen now
-  const judgeFeedbackPromise = getJudgeFeedback(buildable);
+  // Show judge verdicts + speak them (NO LLM calls — precomputed)
+  // While judges speak, start rebuild in background
+  const judgeFeedback = await showJudgeFeedback(judgeVerdicts);
 
-  // Wait for judge feedback
-  const judgeFeedback = await judgeFeedbackPromise;
+  // Rebuild incorporating ALL feedback (1 LLM call for pick + 1 for rebuild = sequential)
+  setPhase('rebuilding', 'INCORPORATING');
+  log('REBUILD: Judges + superchat → UserMap → updated build');
 
-  // Start rebuild incorporating ALL feedback
-  setPhase('rebuilding', 'INCORPORATING FEEDBACK');
-  log('REBUILD: Judges + superchat feedback → updated build');
-  const rebuildPromise = rebuildWithFeedback(buildable, builtCode, judgeFeedback, superchatText);
+  // Push judge feedback to UserMap too
+  for (const verdict of judgeVerdicts) {
+    pushToUserMap(verdict, 'judge'); // fire-and-forget
+  }
 
-  await booSpeak("The feedback is in. The ghost is rebuilding.");
-
-  const { code: updatedCode, incorporated } = await rebuildPromise;
+  const { code: updatedCode, incorporated } = await rebuildWithFeedback(buildable, builtCode, judgeFeedback, superchatText);
   log(`REBUILD: ${incorporated.length} suggestions incorporated`);
 
-  // Show updated demo
   showDemo(updatedCode);
 
-  // === PHASE 5: CLOSE ===
+  // === PHASE 6: CLOSE ===
   setPhase('done', 'SHOW COMPLETE');
   const elapsed = ((Date.now() - state.startTime) / 1000).toFixed(1);
   log(`Show complete in ${elapsed}s`);

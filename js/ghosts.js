@@ -76,7 +76,9 @@ async function generateGhosts() {
   setPhase('generating', 'SUMMONING GHOSTS');
   log('Summoning ghosts from the model swarm...');
 
-  const [dud, buildable] = await Promise.all([generateDud(), generateBuildable()]);
+  // Sequential to respect Featherless concurrency limit
+  const dud = await generateDud();
+  const buildable = await generateBuildable();
 
   state.ghosts = [dud, buildable];
   log(`Dud: "${dud.name}" | Buildable: "${buildable.name}"`);
