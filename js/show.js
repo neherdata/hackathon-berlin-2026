@@ -121,10 +121,12 @@ function formatSuperchat(messages) {
 }
 
 // --- FEEDBACK BANNER ---
-function showFeedbackBanner() {
+function showFeedbackBanner(ghost) {
   const superchatUrl = `${window.location.origin}/superchat.html`;
   const banner = document.getElementById('feedback-banner');
   const urlEl = document.getElementById('feedback-url');
+  const textEl = banner.querySelector('.fb-text');
+  textEl.innerHTML = `FEEDBACK OPEN — ${ghost.name}<small>${ghost.pitch}</small>`;
   urlEl.textContent = superchatUrl.replace(/^https?:\/\//, '');
   banner.classList.add('visible');
 
@@ -202,14 +204,19 @@ async function runShow() {
 
   // === GEN buildable pitch (fastest model) + INTRO TTS (parallel) ===
   setPhase('intro', 'SUMMONING');
-  const buildablePromise = generateBuildable();
+  let buildable, buildPromise, judgeVerdictsPromise;
+  const buildablePromise = generateBuildable().then(b => {
+    buildable = b;
+    state.ghosts = [dud, b];
+    // Show banner with real idea immediately when ready
+    showFeedbackBanner(b);
+    // Kick off build + judges immediately
+    buildPromise = buildProject(b);
+    judgeVerdictsPromise = precomputeJudgeVerdicts(b);
+    return b;
+  });
   await booSpeak("Welcome mortals. Let the haunting begin.");
-  const buildable = await buildablePromise;
-  state.ghosts = [dud, buildable];
-
-  // === IMMEDIATELY: kick off build + judge precompute ===
-  const buildPromise = buildProject(buildable);
-  const judgeVerdictsPromise = precomputeJudgeVerdicts(buildable);
+  await buildablePromise;
 
   // === DUD PITCH (TTS masks build time) ===
   setPhase('pitch', 'GHOST PITCH');
@@ -219,7 +226,7 @@ async function runShow() {
   dom.ghostPitch.textContent = dud.pitch;
   await shortSpeak(`I am ${dud.name}. ${dud.pitch}`, 6, { voiceIndex: 1, rate: 1.2, elVoice: CONFIG.elevenlabs.voices.ghost });
 
-  // === ROAST + OPEN FEEDBACK ===
+  // === ROAST ===
   setPhase('roast', 'REJECTED');
   const roastJudge = CONFIG.judges[Math.floor(Math.random() * CONFIG.judges.length)];
   const { content: roast } = await llmCall(
@@ -231,15 +238,6 @@ async function runShow() {
     { temperature: 0.9, maxTokens: 20 }
   );
   await shortSpeak(roast, 4, { voiceIndex: roastJudge.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[roastJudge.key] });
-
-  // Show feedback banner + QR — audience can start submitting NOW
-  showFeedbackBanner();
-  // Brief pitch of the REAL idea so audience knows what to give feedback on
-  dom.ghostName.textContent = buildable.name;
-  dom.ghostType.textContent = buildable.type;
-  dom.ghostPitch.textContent = buildable.pitch;
-  dom.ghostCard.classList.remove('hidden');
-  await booSpeak(`But this ghost has a real idea. ${buildable.tagline || ''}`);
 
   // === WAIT FOR BUILD ===
   setPhase('building', 'BUILDING LIVE');
