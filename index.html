@@ -334,10 +334,9 @@ const CONFIG = {
         'mistralai/Mistral-Nemo-Instruct-2407',
       ],
       judges: {
-        critic:   'deepseek-ai/DeepSeek-V3-0324',
-        optimist: 'moonshotai/Kimi-K2-Instruct',
-        builder:  'MiniMaxAI/MiniMax-M1-80k',
-        crowd:    'mistralai/Mistral-Nemo-Instruct-2407',
+        carla:  'deepseek-ai/DeepSeek-V3-0324',
+        rod:    'moonshotai/Kimi-K2-Instruct',
+        dan:    'MiniMaxAI/MiniMax-M1-80k',
       }
     }
   },
@@ -659,9 +658,9 @@ Return ONLY valid JSON (no markdown, no code fences):
 // ============================================================
 async function judgeGhost(ghost, crowdScore, round = 1) {
   const judgeConfigs = [
-    { key: 'critic', name: 'The Critic', model: CONFIG.featherless.models.judges.critic, voiceIdx: 2, style: 'harsh but fair, finds flaws' },
-    { key: 'optimist', name: 'The Optimist', model: CONFIG.featherless.models.judges.optimist, voiceIdx: 4, style: 'enthusiastic, sees potential everywhere' },
-    { key: 'builder', name: 'The Builder', model: CONFIG.featherless.models.judges.builder, voiceIdx: 6, style: 'practical, asks "can we build this in 2 minutes?"' },
+    { key: 'carla', name: 'Ghost of Strategy', model: CONFIG.featherless.models.judges.carla, voiceIdx: 2, style: 'a BCG-style management consultant ghost — obsessed with market sizing, competitive moats, and unit economics. Judges ideas on business viability' },
+    { key: 'rod', name: 'Ghost of AI', model: CONFIG.featherless.models.judges.rod, voiceIdx: 4, style: 'an AI professor and podcast host ghost — evaluates the depth and novelty of AI usage, asks "is this real AI or just a wrapper?"' },
+    { key: 'dan', name: 'Ghost of Engineering', model: CONFIG.featherless.models.judges.dan, voiceIdx: 6, style: 'an ex-Google engineer ghost — judges technical implementation quality, scalability, and whether the demo actually works' },
   ];
 
   dom.judgePanel.innerHTML = '';
