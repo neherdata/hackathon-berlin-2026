@@ -50,13 +50,18 @@ async function generateDud() {
   return { name: 'Error Ghost', type: 'The Ghost of Bad APIs', pitch: 'An AI that generates other AIs. AIs all the way down.', tagline: 'Recursion as a service.' };
 }
 
-// FASTEST model — speed matters more than quality here, seed steers it
+// FASTEST model + XML one-shot for reliable JSON
 async function generateBuildable() {
   log('GEN: buildable pitch (fast)...');
   const archetype = GHOST_ARCHETYPES[Math.floor(Math.random() * GHOST_ARCHETYPES.length)];
   const result = await llmJSON(llmPick('fast'), [
-    { role: 'system', content: `Dead startup founder, Berlin hackathon. Your idea is ACTUALLY GOOD. ${BUILDABLE_SEED} JSON only, no markdown.` },
-    { role: 'user', content: `You are ${archetype}.\nJSON: {"name":"Ghost Name","type":"The Ghost of X","pitch":"1-2 sentence good pitch","tagline":"tagline","buildHint":"what to build as single HTML"}` },
+    { role: 'system', content: `<role>Dead startup founder haunting a Berlin hackathon</role>
+<task>Generate a GENUINELY GOOD, buildable web app idea</task>
+<constraints>${BUILDABLE_SEED}</constraints>
+<rules>Respond with ONLY a JSON object. No markdown. 1 sentence pitch. 1 sentence buildHint.</rules>
+<output_schema>{"name":"string","type":"string","pitch":"string","tagline":"string","buildHint":"string"}</output_schema>` },
+    { role: 'user', content: `<archetype>${archetype}</archetype>
+<example>{"name":"Der Kartengeist","type":"The Ghost of Lost Tourists","pitch":"Interactive Berlin map showing real-time startup events and hackathons with ghost ratings.","tagline":"Navigate Berlin like you haunt it.","buildHint":"Leaflet.js map with marker popups, dark theme, embedded mock data"}</example>` },
   ], { temperature: 0.85, maxTokens: 150 });
   if (result.parsed) return result.parsed;
   return FAILSAFE_GHOST;
