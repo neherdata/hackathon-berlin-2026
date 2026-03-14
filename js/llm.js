@@ -55,15 +55,30 @@ async function llmJSON(model, messages, { temperature = 0.8, maxTokens = 512, re
   }
 }
 
-// --- llmFanOut: hit N models in parallel, collect successes ---
-async function llmFanOut(models, messages, { temperature = 0.9, maxTokens = 512, parseJSON = false } = {}) {
-  log(`Fan-out across ${models.length} models...`);
+// --- llmFanOut: hit N models with concurrency limit, collect successes ---
+// Featherless allows 4 concurrent connections — this pools requests
+async function llmFanOut(models, messages, { temperature = 0.9, maxTokens = 512, parseJSON = false, concurrency = 3 } = {}) {
+  log(`Fan-out across ${models.length} models (max ${concurrency} concurrent)...`);
   const fn = parseJSON ? llmJSON : llmCall;
-  const promises = models.map(model =>
-    fn(model, messages, { temperature, maxTokens, quiet: true })
-      .catch(e => { log(`${model.split('/').pop()} failed: ${e.message}`); return null; })
-  );
-  const results = await Promise.all(promises);
+  const results = [];
+  const queue = [...models];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const model = queue.shift();
+      try {
+        const result = await fn(model, messages, { temperature, maxTokens, quiet: true });
+        results.push(result);
+      } catch (e) {
+        log(`${model.split('/').pop()} failed: ${e.message}`);
+        results.push(null);
+      }
+    }
+  }
+
+  // Launch N workers that pull from the queue
+  await Promise.all(Array.from({ length: Math.min(concurrency, models.length) }, () => worker()));
+
   const successes = results.filter(r => r && (parseJSON ? r.parsed !== null : r.content));
   log(`Fan-out: ${successes.length}/${models.length} succeeded`);
   return successes;
