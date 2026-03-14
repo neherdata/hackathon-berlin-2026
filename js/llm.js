@@ -135,8 +135,8 @@ async function llmStream(model, messages, { temperature = 0.7, maxTokens = 2048,
 function llmPick(purpose) {
   const m = CONFIG.featherless.models;
   switch (purpose) {
-    case 'fast':    return m.corpus[m.corpus.length - 1];
-    case 'reason':  return m.corpus[0];
+    case 'fast':    return m.corpus[0];                     // Mistral-Nemo (fastest)
+    case 'reason':  return m.corpus[1];                     // Mistral-Large (best quality)
     case 'random':  return m.corpus[Math.floor(Math.random() * m.corpus.length)];
     case 'judge':   return Object.values(m.judges)[Math.floor(Math.random() * Object.values(m.judges).length)];
     default:        return m.corpus[0];

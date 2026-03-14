@@ -45,9 +45,9 @@ async function buildProject(ghost) {
   const buildHint = ghost.buildHint || ghost.pitch;
 
   const result = await llmCall(llmPick('reason'), [
-    { role: 'system', content: `You are a senior frontend engineer. Generate a COMPLETE, working single-page web app as one HTML file. Include ALL HTML, CSS, and JS inline. The app must work when opened directly in a browser. Use modern CSS (flexbox/grid), vanilla JS, no external dependencies except CDN libraries like Leaflet if needed for maps. Make it visually polished with a dark theme. Return ONLY the HTML code, nothing else — no markdown fences, no explanation.` },
-    { role: 'user', content: `Build this app: ${ghost.name} — ${ghost.pitch}\n\nTechnical hint: ${buildHint}\n\nRequirements:\n- Single HTML file, fully self-contained\n- Dark theme (#0a0a0f background)\n- Mobile-friendly\n- Interactive and visually impressive\n- Must work immediately when opened` },
-  ], { temperature: 0.7, maxTokens: 4096 });
+    { role: 'system', content: `You are a senior frontend engineer. Generate a COMPLETE, working single-page web app as one HTML file. Include ALL HTML, CSS, and JS inline. Keep it CONCISE — under 200 lines. Use modern CSS, vanilla JS, no dependencies. Dark theme (#0a0a0f bg). Return ONLY HTML, no markdown fences.` },
+    { role: 'user', content: `Build: ${ghost.name} — ${ghost.pitch}\nHint: ${buildHint}\nKeep it simple, interactive, mobile-friendly. Under 200 lines of HTML.` },
+  ], { temperature: 0.7, maxTokens: 2048 });
 
   return result.content;
 }

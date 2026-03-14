@@ -450,22 +450,17 @@ const CONFIG = {
     apiKey: 'rc_bc57634bdb07608f5d28175030f049b842e64c4fbf35bad9b9268d7f3e0d22ff',  // expires 2026-03-17
     models: {
       corpus: [
-        'deepseek-ai/DeepSeek-V3-0324',
-        'deepseek-ai/DeepSeek-R1-0528',
-        'deepseek-ai/DeepSeek-V3.1',
-        'deepseek-ai/DeepSeek-V3.2',
-        'MiniMaxAI/MiniMax-M2.5',
-        'moonshotai/Kimi-K2-Instruct',
-        'moonshotai/Kimi-K2.5',
-        'mistralai/Mistral-Nemo-Instruct-2407',
-        'mistralai/Mistral-Large-Instruct-2411',
-        'Qwen/Qwen2-72B-Instruct',
-        'NousResearch/Meta-Llama-3-70B-Instruct',
+        'mistralai/Mistral-Nemo-Instruct-2407',     // fastest
+        'mistralai/Mistral-Large-Instruct-2411',     // fast + good
+        'Qwen/Qwen2-72B-Instruct',                  // solid
+        'NousResearch/Meta-Llama-3-70B-Instruct',   // reliable
+        'moonshotai/Kimi-K2-Instruct',               // good quality
+        'MiniMaxAI/MiniMax-M2.5',                    // decent
       ],
       judges: {
-        carla:  'deepseek-ai/DeepSeek-V3-0324',
-        rod:    'moonshotai/Kimi-K2-Instruct',
-        dan:    'MiniMaxAI/MiniMax-M1-80k',
+        carla:  'mistralai/Mistral-Large-Instruct-2411',
+        rod:    'Qwen/Qwen2-72B-Instruct',
+        dan:    'mistralai/Mistral-Nemo-Instruct-2407',
       }
     }
   },
