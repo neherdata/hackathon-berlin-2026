@@ -356,7 +356,7 @@
   /* ===== TRANSCRIPT LOG — bottom of sidebar ===== */
   #transcript {
     flex: 1;
-    min-height: 60px;
+    min-height: 0;
     max-height: 200px;
     background: rgba(12, 12, 20, 0.92);
     border: 1px solid #1e1e28;
@@ -367,6 +367,7 @@
     color: var(--dim);
     line-height: 1.6;
   }
+  #transcript:empty { display: none; }
   #transcript .log-entry { display: block; }
   #transcript .log-entry .ts { color: #3a3a50; margin-right: 6px; }
   #transcript .log-entry .msg { color: #888; }
