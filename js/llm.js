@@ -5,7 +5,7 @@
 // ============================================================
 
 // --- GLOBAL CONCURRENCY QUEUE (Featherless limit: 4, we use max 3) ---
-const LLM_QUEUE = { active: 0, max: 3, waiting: [] };
+const LLM_QUEUE = { active: 0, max: 2, waiting: [] };
 function llmAcquire() {
   if (LLM_QUEUE.active < LLM_QUEUE.max) {
     LLM_QUEUE.active++;
@@ -133,15 +133,13 @@ async function llmFanOut(models, messages, { temperature = 0.9, maxTokens = 512,
 // --- llmPick: choose best model for a task ---
 // MODEL CONCURRENCY COSTS (Featherless):
 // Mistral-Nemo: 1 unit, Mistral-Large: 4 units, Qwen-72B: 4 units
-// With 4 unit limit, can only run 1 large OR 4 small at once
-// SAFE: use Nemo (1 unit) for everything, DeepSeek for gen
+// SPREAD across 1-unit models to avoid per-model rate limits
+// DeepSeek for code gen, Nemo for small tasks, Llama for judge
 function llmPick(purpose) {
-  const m = CONFIG.featherless.models;
   switch (purpose) {
-    case 'fast':    return m.corpus[0];                     // Mistral-Nemo (1 unit)
-    case 'reason':  return m.corpus[0];                     // ALSO Nemo — Large costs 4 units, kills concurrency
-    case 'random':  return m.corpus[0];
-    case 'judge':   return m.corpus[0];
-    default:        return m.corpus[0];
+    case 'fast':    return 'mistralai/Mistral-Nemo-Instruct-2407';       // 1 unit, tiny tasks
+    case 'reason':  return 'deepseek-ai/DeepSeek-V3-0324';              // 1 unit, code gen
+    case 'judge':   return 'NousResearch/Meta-Llama-3-70B-Instruct';    // 1 unit, different model
+    default:        return 'mistralai/Mistral-Nemo-Instruct-2407';
   }
 }

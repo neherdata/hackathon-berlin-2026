@@ -203,10 +203,10 @@ async function precomputeJudgeVerdicts(ghost) {
   log(`Precomputing judge: ${judge.name}...`);
   const verdicts = [];
   try {
-    const { content } = await llmCall(llmPick('fast'), [
+    const { content } = await llmCall(llmPick('judge'), [
       { role: 'system', content: `You are ${judge.name}. ${judge.backstory} ONE sentence. Max 12 words.` },
       { role: 'user', content: `Ghost: "${ghost.name}" — ${ghost.pitch}` },
-    ], { temperature: 0.8, maxTokens: 25, quiet: true });
+    ], { temperature: 0.8, maxTokens: 25, quiet: true, _retries: 0 });
     verdicts.push(content);
   } catch { verdicts.push('The spirits are silent.'); }
   // Fill remaining judge slots so showJudgeFeedback works
@@ -270,7 +270,7 @@ async function runShow() {
       { role: 'system', content: `You are ${roastJudge.name}. Roast this terrible idea. ONE sentence, max 10 words.` },
       { role: 'user', content: `"${dud.name}" — ${dud.pitch}` },
     ],
-    { temperature: 0.9, maxTokens: 20 }
+    { temperature: 0.9, maxTokens: 20, _retries: 0 }
   );
   await booSpeak("Welcome mortals. Let the haunting begin.");
   await buildablePromise;
