@@ -106,6 +106,7 @@ async function pushToUserMap(text, name = 'audience') {
 }
 
 // --- SUPERCHAT (timestamp-gated) ---
+let _superchatPollTimer = null;
 async function fetchSuperchat(sinceTs) {
   try {
     const res = await fetch(`/api/feedback?since=${sinceTs}`);
@@ -118,6 +119,25 @@ async function fetchSuperchat(sinceTs) {
 function formatSuperchat(messages) {
   if (!messages.length) return 'No audience feedback yet.';
   return messages.map(m => `${m.name}: "${m.text}"`).join('\n');
+}
+function startSuperchatPoll(sinceTs) {
+  const el = document.getElementById('superchat-stats');
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.innerHTML = `<h3 style="color:var(--warn)">LIVE SUPERCHAT</h3><div style="color:var(--dim);font-size:11px">Waiting for feedback...</div>`;
+  _superchatPollTimer = setInterval(async () => {
+    const msgs = await fetchSuperchat(sinceTs);
+    if (msgs.length > 0) {
+      el.innerHTML = `<h3 style="color:var(--warn)">SUPERCHAT</h3>
+        <div style="color:var(--accent);font-size:18px;margin:4px 0">${msgs.length} messages</div>
+        <div style="color:var(--dim);font-size:11px;max-height:120px;overflow-y:auto">
+          ${msgs.slice(-8).map(m => `<div style="margin:3px 0"><b style="color:var(--ghost)">${m.name}</b>: ${m.text}</div>`).join('')}
+        </div>`;
+    }
+  }, 3000);
+}
+function stopSuperchatPoll() {
+  if (_superchatPollTimer) { clearInterval(_superchatPollTimer); _superchatPollTimer = null; }
 }
 
 // --- FEEDBACK BANNER ---
@@ -218,6 +238,7 @@ async function runShow() {
     showFeedbackBanner(b);
     buildPromise = buildProject(b);
     judgeVerdictsPromise = precomputeJudgeVerdicts(b);
+    startSuperchatPoll(feedbackSince);
     return b;
   });
   const roastPromise = llmCall(
@@ -241,7 +262,11 @@ async function runShow() {
 
   // === ROAST (already precomputed) ===
   setPhase('roast', 'REJECTED');
-  const { content: roast } = await roastPromise;
+  let roast = 'This idea is already dead. Next!';
+  try {
+    const roastResult = await roastPromise;
+    if (roastResult?.content) roast = roastResult.content;
+  } catch (e) { log(`Roast LLM failed: ${e.message}, using fallback`); }
   await shortSpeak(roast, 4, { voiceIndex: roastJudge.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[roastJudge.key] });
 
   // === WAIT FOR BUILD ===
@@ -257,6 +282,7 @@ async function runShow() {
 
   // === JUDGES + INCORPORATE ===
   setPhase('judging', 'JUDGES + FEEDBACK');
+  stopSuperchatPoll();
   const judgeVerdicts = await judgeVerdictsPromise;
   const superchatMessages = await fetchSuperchat(feedbackSince);
   showSuperchatStats(superchatMessages);
