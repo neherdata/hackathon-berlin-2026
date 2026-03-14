@@ -476,10 +476,20 @@
     <!-- Demo iframe — hidden until show.js calls showDemo() -->
     <iframe id="demo-frame" class="hidden"></iframe>
 
-    <!-- QR code overlay — top-right corner -->
+    <!-- QR code overlay — top-right corner, visible from page load -->
     <div id="qr-container">
-      <p id="deploy-url"></p>
+      <p id="deploy-url" style="word-break:break-all"></p>
+      <img id="qr-img" src="" alt="Scan to give feedback" style="display:none">
     </div>
+    <script>
+      (function() {
+        var u = location.origin + '/superchat.html';
+        document.getElementById('deploy-url').textContent = u.replace(/^https?:\/\//, '');
+        var img = document.getElementById('qr-img');
+        img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(u) + '&bgcolor=0a0a0f&color=8b5cf6';
+        img.style.display = 'block';
+      })();
+    </script>
 
     <!-- Feedback banner — slides up after dud is rejected -->
     <div id="feedback-banner">
