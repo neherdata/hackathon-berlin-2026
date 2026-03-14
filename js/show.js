@@ -192,6 +192,7 @@ function showSuperchatStats(messages) {
 // Feedback banner opens on roast — audience can submit while build runs.
 async function runShow() {
   state.startTime = Date.now();
+  const feedbackSince = state.startTime;
   dom.btnStart.style.display = 'none';
   dom.btnSkip.style.display = 'inline-block';
   await initMic();
@@ -230,9 +231,6 @@ async function runShow() {
     { temperature: 0.9, maxTokens: 20 }
   );
   await shortSpeak(roast, 4, { voiceIndex: roastJudge.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[roastJudge.key] });
-
-  // Mark feedback start — only collect from this point
-  const feedbackSince = Date.now();
 
   // Show feedback banner + QR — audience can start submitting NOW
   showFeedbackBanner();
