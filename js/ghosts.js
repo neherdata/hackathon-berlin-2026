@@ -1,7 +1,8 @@
 // ============================================================
 // GHOST GENERATION — DeepSeek-V3-0324 optimized
-// XML-structured prompts for fastest, most reliable JSON output
-// Depends on: CONFIG, state, log(), setPhase(), llmJSON(), llmPick()
+// Only generateBuildable() is called live (during intro TTS)
+// DUD is precomputed in show.js — zero LLM time
+// Depends on: CONFIG, state, log(), setPhase(), llmJSON()
 // ============================================================
 
 const GHOST_ARCHETYPES = [
@@ -34,30 +35,10 @@ const FAILSAFE_GHOST = {
   type: 'The Ghost of Bad Translations',
   pitch: 'Point your phone at any German restaurant menu and get instant cultural translations.',
   tagline: 'Lost in translation? This ghost eats menus for breakfast.',
+  buildHint: 'Camera overlay with OCR mock, German-to-English translation cards, dark theme',
 };
 
-// DeepSeek-V3-0324 optimized — XML tags for structure, minimal tokens
-async function generateDud() {
-  log('GEN: dud pitch...');
-  const archetype = GHOST_ARCHETYPES[Math.floor(Math.random() * GHOST_ARCHETYPES.length)];
-
-  const result = await llmJSON('deepseek-ai/DeepSeek-V3-0324', [
-    { role: 'system', content: `<role>Dead startup founder haunting a Berlin hackathon</role>
-<task>Generate a TERRIBLE, funny, useless startup idea</task>
-<rules>
-- Respond with ONLY a JSON object
-- No markdown, no explanation, no code fences
-- Keep pitch to 1 sentence max
-</rules>
-<output_schema>{"name":"string","type":"string","pitch":"string","tagline":"string"}</output_schema>` },
-    { role: 'user', content: `<archetype>${archetype}</archetype>
-<example>{"name":"Phantomwire","type":"The Ghost of Dead Startups","pitch":"A blockchain that only stores regrets.","tagline":"Immutable sadness."}</example>` },
-  ], { temperature: 1.0, maxTokens: 120 });
-
-  if (result.parsed) return result.parsed;
-  return { name: 'Error Ghost', type: 'The Ghost of Bad APIs', pitch: 'An AI that generates other AIs. AIs all the way down.', tagline: 'Recursion as a service.' };
-}
-
+// Called during intro TTS — runs in parallel, ~4s on DeepSeek-V3-0324
 async function generateBuildable() {
   log('GEN: buildable pitch...');
   const archetype = GHOST_ARCHETYPES[Math.floor(Math.random() * GHOST_ARCHETYPES.length)];
@@ -77,16 +58,10 @@ async function generateBuildable() {
 <example>{"name":"Der Kartengeist","type":"The Ghost of Lost Tourists","pitch":"Interactive Berlin map showing real-time startup events, hackathons, and meetups with ghost ratings.","tagline":"Navigate Berlin like you haunt it.","buildHint":"Leaflet.js map with marker popups, dark theme, embedded mock data"}</example>` },
   ], { temperature: 0.85, maxTokens: 180 });
 
-  if (result.parsed) return result.parsed;
+  if (result.parsed) {
+    log(`GEN: "${result.parsed.name}" ready`);
+    return result.parsed;
+  }
+  log('GEN: fallback to failsafe ghost');
   return FAILSAFE_GHOST;
-}
-
-// Parallel generation — both hit DeepSeek-V3-0324 simultaneously
-async function generateGhosts() {
-  setPhase('generating', 'SUMMONING GHOSTS');
-  log('Summoning ghosts (DeepSeek-V3-0324, parallel)...');
-  const [dud, buildable] = await Promise.all([generateDud(), generateBuildable()]);
-  state.ghosts = [dud, buildable];
-  log(`Dud: "${dud.name}" | Buildable: "${buildable.name}"`);
-  return state.ghosts;
 }
