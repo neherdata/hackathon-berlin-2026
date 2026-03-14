@@ -319,12 +319,11 @@
 
 <script>
 // ============================================================
-// CONFIG
+// CONFIG — everyone edits this
 // ============================================================
 const CONFIG = {
   featherless: {
     baseUrl: 'https://api.featherless.ai/v1',
-    // Key loaded from env or hardcoded for hackathon
     apiKey: 'rc_bc57634bdb07608f5d28175030f049b842e64c4fbf35bad9b9268d7f3e0d22ff',  // expires 2026-03-17
     models: {
       corpus: [
@@ -344,7 +343,7 @@ const CONFIG = {
     reactionWindowMs: 2000,
     cheerBandHz: [2000, 8000],
     booBandHz: [100, 500],
-    dudThreshold: 10,     // below this = dead
+    dudThreshold: 10,
     fftSize: 2048,
   },
   tts: {
@@ -354,14 +353,12 @@ const CONFIG = {
   needle: {
     apiKey: 'apk_01KKNT8MKM949HHQNA0BMDQ9SR',
     baseUrl: 'https://api.needle.app/v1',
-    collectionId: null,  // created at runtime
+    collectionId: null,
   },
   overdrive: {
-    // Jira project + build trigger
     jiraProject: 'FAM',
     deployDomain: 'westover.lol',
   },
-  // Ghost judge personas — edit backstories here
   judges: [
     {
       key: 'carla',
@@ -385,13 +382,13 @@ const CONFIG = {
 };
 
 // ============================================================
-// STATE
+// STATE + DOM + LOGGING — core plumbing (don't touch)
 // ============================================================
 const state = {
-  phase: 'idle',        // idle, intro, pitch, crowd, judging, deliberation, overdrive
-  ghosts: [],           // generated ghost pitches
+  phase: 'idle',
+  ghosts: [],
   currentGhostIdx: -1,
-  crowdScores: [],      // { energy, sentiment, rawHigh, rawLow }
+  crowdScores: [],
   totalTokens: 0,
   startTime: null,
   audioCtx: null,
@@ -399,9 +396,6 @@ const state = {
   micStream: null,
 };
 
-// ============================================================
-// DOM REFS
-// ============================================================
 const $ = (sel) => document.querySelector(sel);
 const dom = {
   phase:       $('#phase-indicator'),
@@ -428,9 +422,6 @@ const dom = {
   btnSkip:     $('#btn-skip'),
 };
 
-// ============================================================
-// LOGGING
-// ============================================================
 function log(msg, { model, tokens } = {}) {
   const ts = ((Date.now() - (state.startTime || Date.now())) / 1000).toFixed(1);
   const entry = document.createElement('div');
@@ -460,136 +451,6 @@ function updateInstrument({ model, tokens } = {}) {
     dom.iTokens.textContent = state.totalTokens;
   }
   dom.iElapsed.textContent = ((Date.now() - state.startTime) / 1000).toFixed(1) + 's';
-}
-
-// ============================================================
-// LLM FRAMEWORK — base primitives for all model calls
-// ============================================================
-
-// --- llmCall: single model, single response ---
-async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024, quiet = false } = {}) {
-  const t0 = Date.now();
-  updateInstrument({ model });
-  if (!quiet) log(`Calling ${model.split('/').pop()}...`, { model });
-
-  const res = await fetch(`${CONFIG.featherless.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${CONFIG.featherless.apiKey}`,
-    },
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    log(`ERROR: ${res.status} — ${err}`, { model });
-    throw new Error(`Featherless ${res.status}: ${err}`);
-  }
-
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content || '';
-  const usage = data.usage?.total_tokens || 0;
-  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-
-  updateInstrument({ model, tokens: usage });
-  if (!quiet) log(`Response in ${elapsed}s`, { model, tokens: usage });
-
-  return { content, usage, elapsed, model };
-}
-
-// --- llmJSON: call + extract + parse JSON, with retry ---
-async function llmJSON(model, messages, { temperature = 0.8, maxTokens = 512, retries = 1 } = {}) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const result = await llmCall(model, messages, { temperature, maxTokens, quiet: attempt > 0 });
-      // Extract JSON object or array from response
-      const objMatch = result.content.match(/\{[\s\S]*\}/);
-      const arrMatch = result.content.match(/\[[\s\S]*\]/);
-      const jsonStr = objMatch ? objMatch[0] : arrMatch ? arrMatch[0] : null;
-      if (!jsonStr) throw new Error('No JSON found in response');
-      return { ...result, parsed: JSON.parse(jsonStr) };
-    } catch (e) {
-      if (attempt === retries) {
-        log(`JSON parse failed after ${retries + 1} attempts: ${e.message}`, { model });
-        return { content: '', usage: 0, elapsed: '0', model, parsed: null };
-      }
-      log(`Retry ${attempt + 1}/${retries}...`, { model });
-    }
-  }
-}
-
-// --- llmFanOut: hit N models in parallel, collect successes ---
-async function llmFanOut(models, messages, { temperature = 0.9, maxTokens = 512, parseJSON = false } = {}) {
-  log(`Fan-out across ${models.length} models...`);
-  const fn = parseJSON ? llmJSON : llmCall;
-  const promises = models.map(model =>
-    fn(model, messages, { temperature, maxTokens, quiet: true })
-      .catch(e => { log(`${model.split('/').pop()} failed: ${e.message}`); return null; })
-  );
-  const results = await Promise.all(promises);
-  const successes = results.filter(r => r && (parseJSON ? r.parsed !== null : r.content));
-  log(`Fan-out: ${successes.length}/${models.length} succeeded`);
-  return successes;
-}
-
-// --- llmStream: streaming call for OVERDRIVE build log ---
-async function llmStream(model, messages, { temperature = 0.7, maxTokens = 2048, onChunk } = {}) {
-  updateInstrument({ model });
-  log(`Streaming from ${model.split('/').pop()}...`, { model });
-
-  const res = await fetch(`${CONFIG.featherless.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${CONFIG.featherless.apiKey}`,
-    },
-    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: true }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Featherless stream ${res.status}: ${err}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let full = '';
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop(); // keep incomplete line
-    for (const line of lines) {
-      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
-      try {
-        const chunk = JSON.parse(line.slice(6));
-        const delta = chunk.choices?.[0]?.delta?.content || '';
-        if (delta) {
-          full += delta;
-          if (onChunk) onChunk(delta, full);
-        }
-      } catch {}
-    }
-  }
-
-  log(`Stream complete (${full.length} chars)`, { model });
-  return { content: full, model };
-}
-
-// --- llmPick: choose best model for a task ---
-function llmPick(purpose) {
-  const m = CONFIG.featherless.models;
-  switch (purpose) {
-    case 'fast':    return m.corpus[m.corpus.length - 1]; // last = fastest
-    case 'reason':  return m.corpus[0];                    // first = best reasoning
-    case 'random':  return m.corpus[Math.floor(Math.random() * m.corpus.length)];
-    case 'judge':   return Object.values(m.judges)[Math.floor(Math.random() * Object.values(m.judges).length)];
-    default:        return m.corpus[0];
-  }
 }
 
 // ============================================================
@@ -633,17 +494,11 @@ function getFrequencyEnergy(lowHz, highHz) {
   const bufLen = state.analyser.frequencyBinCount;
   const data = new Uint8Array(bufLen);
   state.analyser.getByteFrequencyData(data);
-
   const nyquist = state.audioCtx.sampleRate / 2;
   const lowBin = Math.floor((lowHz / nyquist) * bufLen);
   const highBin = Math.floor((highHz / nyquist) * bufLen);
-
-  let sum = 0;
-  let count = 0;
-  for (let i = lowBin; i <= highBin && i < bufLen; i++) {
-    sum += data[i];
-    count++;
-  }
+  let sum = 0, count = 0;
+  for (let i = lowBin; i <= highBin && i < bufLen; i++) { sum += data[i]; count++; }
   return count > 0 ? sum / count : 0;
 }
 
@@ -653,70 +508,37 @@ async function listenToCrowd() {
   dom.crowdFill.style.width = '0%';
   dom.crowdFill.className = '';
   dom.crowdSentiment.textContent = '';
-
   setPhase('crowd', 'LISTENING');
   log('Mic open — react now!');
 
   return new Promise((resolve) => {
     const duration = CONFIG.crowd.reactionWindowMs;
     const interval = 100;
-    let elapsed = 0;
-    let peakHigh = 0;
-    let peakLow = 0;
-    let samples = [];
+    let elapsed = 0, samples = [];
 
     const timer = setInterval(() => {
       elapsed += interval;
-      const remaining = Math.ceil((duration - elapsed) / 1000);
-      dom.crowdTimer.textContent = `${remaining}s`;
-
+      dom.crowdTimer.textContent = `${Math.ceil((duration - elapsed) / 1000)}s`;
       const highE = getFrequencyEnergy(...CONFIG.crowd.cheerBandHz);
       const lowE = getFrequencyEnergy(...CONFIG.crowd.booBandHz);
       const total = (highE + lowE) / 2;
-
-      peakHigh = Math.max(peakHigh, highE);
-      peakLow = Math.max(peakLow, lowE);
       samples.push({ highE, lowE, total });
 
-      // Update meter
       const pct = Math.min(100, (total / 128) * 100);
       dom.crowdFill.style.width = `${pct}%`;
-
-      if (highE > lowE * 1.3) {
-        dom.crowdFill.className = 'cheer';
-      } else if (lowE > highE * 1.3) {
-        dom.crowdFill.className = 'boo';
-      } else {
-        dom.crowdFill.className = total > CONFIG.crowd.dudThreshold ? '' : 'dead';
-      }
+      dom.crowdFill.className = highE > lowE * 1.3 ? 'cheer' : lowE > highE * 1.3 ? 'boo' : total > CONFIG.crowd.dudThreshold ? '' : 'dead';
 
       if (elapsed >= duration) {
         clearInterval(timer);
-
-        // Calculate final score
         const avgHigh = samples.reduce((s, x) => s + x.highE, 0) / samples.length;
         const avgLow = samples.reduce((s, x) => s + x.lowE, 0) / samples.length;
-        const avgTotal = samples.reduce((s, x) => s + x.total, 0) / samples.length;
-        const energy = Math.round((avgTotal / 128) * 100);
+        const energy = Math.round((samples.reduce((s, x) => s + x.total, 0) / samples.length / 128) * 100);
 
         let sentiment;
-        if (energy < CONFIG.crowd.dudThreshold) {
-          sentiment = 'dead';
-          dom.crowdSentiment.textContent = '...crickets';
-          dom.crowdSentiment.style.color = 'var(--dim)';
-        } else if (avgHigh > avgLow * 1.3) {
-          sentiment = 'cheer';
-          dom.crowdSentiment.textContent = 'CHEERS!';
-          dom.crowdSentiment.style.color = 'var(--accent)';
-        } else if (avgLow > avgHigh * 1.3) {
-          sentiment = 'boo';
-          dom.crowdSentiment.textContent = 'BOOOO!';
-          dom.crowdSentiment.style.color = 'var(--danger)';
-        } else {
-          sentiment = 'mixed';
-          dom.crowdSentiment.textContent = 'Mixed reactions...';
-          dom.crowdSentiment.style.color = 'var(--warn)';
-        }
+        if (energy < CONFIG.crowd.dudThreshold) { sentiment = 'dead'; dom.crowdSentiment.textContent = '...crickets'; dom.crowdSentiment.style.color = 'var(--dim)'; }
+        else if (avgHigh > avgLow * 1.3) { sentiment = 'cheer'; dom.crowdSentiment.textContent = 'CHEERS!'; dom.crowdSentiment.style.color = 'var(--accent)'; }
+        else if (avgLow > avgHigh * 1.3) { sentiment = 'boo'; dom.crowdSentiment.textContent = 'BOOOO!'; dom.crowdSentiment.style.color = 'var(--danger)'; }
+        else { sentiment = 'mixed'; dom.crowdSentiment.textContent = 'Mixed reactions...'; dom.crowdSentiment.style.color = 'var(--warn)'; }
 
         const score = { energy, sentiment, avgHigh, avgLow };
         state.crowdScores.push(score);
@@ -726,337 +548,24 @@ async function listenToCrowd() {
     }, interval);
   });
 }
+</script>
 
+<!-- Module scripts — load order matters -->
+<script src="js/llm.js"></script>
+<script src="js/ghosts.js"></script>
+<script src="js/show.js"></script>
+
+<script>
 // ============================================================
-// GHOST GENERATION — Dev 2 customizes this section
-// ============================================================
-
-// Ghost generation prompt — Dev 2: edit this to shape ghost personalities
-const GHOST_PROMPT = {
-  system: 'You are a creative ghost at a hackathon. Return only valid JSON.',
-  user: `You are a ghost haunting a tech hackathon in Berlin. Generate ONE creative startup idea as a ghost character.
-
-Return ONLY valid JSON (no markdown, no code fences):
-{"name": "Ghost Name (spooky/funny)", "type": "The Ghost of [something]", "pitch": "2-3 sentence startup pitch", "tagline": "One catchy line"}`,
-};
-
-// Failsafe ghost — always added last
-const FAILSAFE_GHOST = {
-  name: 'Der Speisekarten-Geist',
-  type: 'The Ghost of Bad Translations',
-  pitch: 'Point your phone at any German restaurant menu and get instant cultural translations. Not just words — context, allergens, local tips, and pronunciation. Never order Handkäse by accident again.',
-  tagline: 'Lost in translation? This ghost eats menus for breakfast.',
-};
-
-async function generateGhosts() {
-  setPhase('generating', 'SUMMONING GHOSTS');
-  log('Summoning ghosts from the model swarm...');
-
-  const models = CONFIG.featherless.models.corpus;
-  const messages = [
-    { role: 'system', content: GHOST_PROMPT.system },
-    { role: 'user', content: GHOST_PROMPT.user },
-  ];
-
-  // Fan out to all models, parse JSON responses
-  const results = await llmFanOut(models, messages, { temperature: 0.9, maxTokens: 256, parseJSON: true });
-  state.ghosts = results.map(r => r.parsed);
-
-  // Always add failsafe last
-  state.ghosts.push(FAILSAFE_GHOST);
-
-  log(`${state.ghosts.length} ghosts summoned`);
-  return state.ghosts;
-}
-
-// ============================================================
-// BOO — MC, Audience Judge, Announcer
-// ============================================================
-const BOO = {
-  name: 'Boo',
-  voiceIdx: 0,
-  pitch: 0.6,
-  rate: 1.1,
-  backstory: 'You are Boo, the Ghost Host. You are the MC, the audience\'s voice, and the final announcer. You interpret crowd energy — cheers, boos, silence — and translate it into ghost verdicts. You are theatrical, dramatic, and a little unhinged. You love chaos.',
-};
-
-async function booSpeak(text) {
-  await speak(text, { voiceIndex: BOO.voiceIdx, rate: BOO.rate, pitch: BOO.pitch });
-}
-
-async function booJudge(ghost, crowdScore) {
-  const crowdText = crowdScore.sentiment === 'cheer' ? 'The living ROARED with approval!'
-    : crowdScore.sentiment === 'boo' ? 'The living have REJECTED this ghost!'
-    : crowdScore.sentiment === 'dead' ? 'Nothing. Not a sound. The living don\'t care.'
-    : 'The living are... confused.';
-
-  const { content } = await llmCall(llmPick('fast'), [
-    { role: 'system', content: `${BOO.backstory} Speak as Boo. ONE dramatic sentence about the crowd's reaction. Channel the energy.` },
-    { role: 'user', content: `The crowd just reacted to "${ghost.name}": ${crowdText} Energy: ${crowdScore.energy}%. Translate this for the judges.` },
-  ], { temperature: 0.9, maxTokens: 50 });
-
-  return content;
-}
-
-// ============================================================
-// CHAOS JUDGES — Generated on the fly by Boo
-// ============================================================
-async function summonChaosJudges(ghost) {
-  log('Boo is summoning chaos judges...');
-  setPhase('chaos', 'SUMMONING CHAOS');
-
-  const result = await llmJSON(llmPick('reason'), [
-    { role: 'system', content: 'Generate 2 absurd ghost judge characters in JSON array. Each has a name, a ridiculous backstory (1 sentence — how they died), and what they judge (1 sentence). Be unhinged and funny. Return ONLY a JSON array, no markdown.' },
-    { role: 'user', content: `These judges are evaluating: "${ghost.name}" — ${ghost.pitch}. Make them relevant but absurd.` },
-  ], { temperature: 1.0, maxTokens: 256 });
-
-  if (result.parsed && Array.isArray(result.parsed)) {
-    return result.parsed.slice(0, 2).map((j, i) => ({
-      name: j.name || `Chaos Ghost ${i + 1}`,
-      backstory: j.backstory || 'Died of pure chaos.',
-      judges: j.judges || j.what_they_judge || 'vibes',
-      voiceIdx: 8 + i,
-    }));
-  }
-  // Fallback chaos judges
-  return [
-    { name: 'Gary the Unpredictable', backstory: 'Died by tripping over a USB cable.', judges: 'whether the name sounds cool', voiceIdx: 8 },
-    { name: 'The Void', backstory: 'Was never born. Just appeared.', judges: 'cosmic relevance', voiceIdx: 9 },
-  ];
-}
-
-// ============================================================
-// JUDGE DELIBERATION
-// ============================================================
-async function judgeGhost(ghost, crowdScore, round = 1) {
-  const models = Object.values(CONFIG.featherless.models.judges);
-  const coreJudges = CONFIG.judges.map((j, i) => ({
-    ...j,
-    model: models[i % models.length],
-    style: j.backstory,
-  }));
-
-  dom.judgePanel.innerHTML = '';
-  dom.judgePanel.classList.remove('hidden');
-
-  // Boo announces crowd reaction first
-  const booVerdict = await booJudge(ghost, crowdScore);
-  const booCard = document.createElement('div');
-  booCard.className = 'judge-card';
-  booCard.style.borderColor = 'var(--warn)';
-  booCard.innerHTML = `<h3 style="color: var(--warn)">Boo (The Crowd)</h3><div class="verdict">${booVerdict}</div>`;
-  dom.judgePanel.appendChild(booCard);
-  setPhase('judging', 'BOO SPEAKS');
-  await booSpeak(booVerdict);
-
-  const crowdContext = `Boo, the audience ghost, says: "${booVerdict}" (crowd energy: ${crowdScore.energy}%, sentiment: ${crowdScore.sentiment})`;
-
-  const roundContext = round === 2
-    ? 'This is your FINAL deliberation. You must reach a BUILD or NO BUILD verdict. Be decisive.'
-    : 'Give your initial take. ONE sentence only — punchy and decisive.';
-
-  // Core judges
-  for (const judge of coreJudges) {
-    const card = document.createElement('div');
-    card.className = 'judge-card';
-    card.innerHTML = `<h3>${judge.name}</h3><div class="verdict">Thinking...</div>`;
-    dom.judgePanel.appendChild(card);
-
-    const { content } = await llmCall(judge.model, [
-      { role: 'system', content: `You are ${judge.name}, a ghost judge at a hackathon. ${judge.style} Speak in first person as a ghost. ONE sentence only — punchy and decisive. ${roundContext}` },
-      { role: 'user', content: `Ghost pitch: "${ghost.name}" — ${ghost.pitch}\n\n${crowdContext}\n\nYour verdict (ONE sentence):` },
-    ], { temperature: 0.7, maxTokens: 60 });
-
-    card.querySelector('.verdict').textContent = content;
-    setPhase('judging', `JUDGE: ${judge.name.toUpperCase()}`);
-    await speak(content, { voiceIndex: judge.voiceIdx, rate: 1.2 });
-  }
-
-  // Round 2: summon chaos judges for extra drama
-  if (round === 2) {
-    const chaosJudges = await summonChaosJudges(ghost);
-    for (const chaos of chaosJudges) {
-      const card = document.createElement('div');
-      card.className = 'judge-card';
-      card.style.borderColor = 'var(--danger)';
-      card.innerHTML = `<h3 style="color: var(--danger)">${chaos.name}</h3><div class="ghost-type">${chaos.backstory}</div><div class="verdict">Channeling...</div>`;
-      dom.judgePanel.appendChild(card);
-
-      const { content } = await llmCall(
-        CONFIG.featherless.models.corpus[Math.floor(Math.random() * CONFIG.featherless.models.corpus.length)],
-        [
-          { role: 'system', content: `You are ${chaos.name}, a chaos ghost judge. ${chaos.backstory} You judge: ${chaos.judges}. ONE sentence verdict — be chaotic and funny.` },
-          { role: 'user', content: `Ghost pitch: "${ghost.name}" — ${ghost.pitch}\n${crowdContext}\nYour chaotic verdict:` },
-        ], { temperature: 1.0, maxTokens: 50 }
-      );
-
-      card.querySelector('.verdict').textContent = content;
-      setPhase('judging', `CHAOS: ${chaos.name.toUpperCase()}`);
-      await speak(content, { voiceIndex: chaos.voiceIdx, rate: 1.3 });
-    }
-  }
-}
-
-// ============================================================
-// BUILD DECISION — Boo announces
-// ============================================================
-async function decideBuild(ghost, scores) {
-  const model = CONFIG.featherless.models.judges.carla;
-  const scoresSummary = scores.map((s, i) =>
-    `Round ${i + 1}: ${s.sentiment} (${s.energy}%)`
-  ).join(', ');
-
-  const { content } = await llmCall(model, [
-    { role: 'system', content: `You are Boo, the Ghost Host. ${BOO.backstory} Based on crowd reactions and judge verdicts, announce the FINAL verdict. Start with "BUILD!" or "NO BUILD!" Be dramatic. One sentence.` },
-    { role: 'user', content: `Ghost: "${ghost.name}" — ${ghost.pitch}\nCrowd scores: ${scoresSummary}\nThe judges have deliberated. Your final announcement:` },
-  ], { temperature: 0.6, maxTokens: 80 });
-
-  log(`BOO VERDICT: ${content}`);
-  setPhase('verdict', content.toUpperCase().includes('BUILD!') && !content.toUpperCase().includes('NO BUILD') ? 'BUILD!' : 'NO BUILD');
-  await booSpeak(content);
-
-  return content.toUpperCase().includes('BUILD') && !content.toUpperCase().includes('NO BUILD');
-}
-
-// ============================================================
-// OVERDRIVE (Build + Deploy)
-// ============================================================
-async function overdrive(ghost) {
-  setPhase('overdrive', 'OVERDRIVE');
-  dom.overdrive.style.display = 'block';
-  dom.buildLog.textContent = '';
-
-  function buildLog(msg) {
-    const ts = ((Date.now() - state.startTime) / 1000).toFixed(1);
-    dom.buildLog.textContent += `[${ts}s] ${msg}\n`;
-    dom.buildLog.scrollTop = dom.buildLog.scrollHeight;
-    log(msg);
-  }
-
-  buildLog('OVERDRIVE ENGAGED');
-  buildLog(`Building: ${ghost.name}`);
-  buildLog(`Pitch: ${ghost.pitch}`);
-  buildLog('');
-  buildLog('Generating build spec...');
-
-  // Generate a detailed spec using Featherless (streaming for live build log)
-  const { content: spec } = await llmStream(llmPick('reason'), [
-    { role: 'system', content: 'You are a senior engineer. Write a brief technical spec for a single-page web app. Include: what it does, the HTML structure, key JS functions needed. Keep it under 200 words. This will be fed to an AI coding agent.' },
-    { role: 'user', content: `Build this app: ${ghost.name} — ${ghost.pitch}. It must be a single HTML file with embedded CSS and JS, mobile-friendly, deployable to Cloudflare Pages.` },
-  ], { maxTokens: 512, onChunk: (delta) => { dom.buildLog.textContent += delta; dom.buildLog.scrollTop = dom.buildLog.scrollHeight; } });
-
-  buildLog('Spec generated');
-  buildLog(spec.substring(0, 200) + '...');
-  buildLog('');
-  buildLog('Triggering build agent via Jira...');
-
-  // TODO: Trigger actual build via Jira API / familiar MCP
-  // For now, show the spec and provide manual trigger
-  buildLog('');
-  buildLog('=== BUILD SPEC READY ===');
-  buildLog('Waiting for agent to build and deploy...');
-  buildLog(`Target: https://${ghost.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${CONFIG.overdrive.deployDomain}`);
-
-  await speak(`Overdrive engaged. Building ${ghost.name}. Stand by.`, { rate: 0.9, pitch: 0.7 });
-}
-
-// ============================================================
-// SHOW RUNNER (Main flow)
-// ============================================================
-async function runShow() {
-  state.startTime = Date.now();
-  dom.btnStart.style.display = 'none';
-  dom.btnSkip.style.display = 'inline-block';
-
-  // Request mic permission early
-  await initMic();
-
-  // Phase 0: MC Ghost intro — fast, no calibration
-  setPhase('intro', 'MC GHOST');
-  log('MC Ghost taking the stage...');
-  await speak(
-    "Welcome, mortals. Startup ghosts are about to pitch you. " +
-    "Cheer if you love it. Boo if you hate it. Silence kills. " +
-    "If a ghost survives... we build it live. Let the haunting begin.",
-    { voiceIndex: 0, rate: 1.1, pitch: 0.7 }
-  );
-
-  // Generate ghosts
-  await generateGhosts();
-
-  // Run through ghosts
-  for (let i = 0; i < state.ghosts.length; i++) {
-    state.currentGhostIdx = i;
-    const ghost = state.ghosts[i];
-
-    // Phase 1: Pitch
-    setPhase('pitch', 'GHOST PITCH');
-    dom.ghostCard.classList.remove('hidden');
-    dom.ghostName.textContent = ghost.name;
-    dom.ghostType.textContent = ghost.type;
-    dom.ghostPitch.textContent = ghost.pitch;
-    log(`Ghost ${i + 1}/${state.ghosts.length}: ${ghost.name}`);
-
-    await speak(`I am ${ghost.name}. ${ghost.pitch}`, { voiceIndex: (i * 2 + 1) % 8, rate: 1.15 });
-
-    // Phase 2: Crowd reaction #1
-    const crowd1 = await listenToCrowd();
-
-    if (crowd1.energy < CONFIG.crowd.dudThreshold) {
-      log(`DUD — ghost banished (energy: ${crowd1.energy}%)`);
-      await speak("Banished.", { voiceIndex: 0, rate: 1.2, pitch: 0.5 });
-      dom.ghostCard.classList.add('hidden');
-      dom.crowdMeter.style.display = 'none';
-      continue;
-    }
-
-    // Phase 3: Judging Round 1
-    setPhase('judging', 'JUDGING ROUND 1');
-    await judgeGhost(ghost, crowd1, 1);
-
-    // Phase 4: Crowd reaction #2
-    await speak("Your turn.", { voiceIndex: 0, rate: 1.2, pitch: 0.7 });
-    const crowd2 = await listenToCrowd();
-
-    // Phase 5: Final deliberation
-    setPhase('deliberation', 'FINAL DELIBERATION');
-    await judgeGhost(ghost, crowd2, 2);
-
-    // BUILD or NO BUILD
-    const shouldBuild = await decideBuild(ghost, [crowd1, crowd2]);
-
-    if (shouldBuild) {
-      await overdrive(ghost);
-      break;
-    } else {
-      await speak("Next ghost.", { voiceIndex: 0, rate: 1.2, pitch: 0.7 });
-      dom.ghostCard.classList.add('hidden');
-      dom.judgePanel.classList.add('hidden');
-      dom.crowdMeter.style.display = 'none';
-    }
-  }
-}
-
-// ============================================================
-// EVENT LISTENERS
+// EVENT LISTENERS — wires everything together
 // ============================================================
 dom.btnStart.addEventListener('click', runShow);
 dom.btnOverdrive.addEventListener('click', () => {
-  // Manual override — force build current ghost
-  if (state.currentGhostIdx >= 0) {
-    overdrive(state.ghosts[state.currentGhostIdx]);
-  }
+  if (state.currentGhostIdx >= 0) overdrive(state.ghosts[state.currentGhostIdx]);
 });
-dom.btnSkip.addEventListener('click', () => {
-  // Skip current speech
-  speechSynthesis.cancel();
-});
-
-// Update elapsed timer
+dom.btnSkip.addEventListener('click', () => speechSynthesis.cancel());
 setInterval(() => {
-  if (state.startTime) {
-    dom.iElapsed.textContent = ((Date.now() - state.startTime) / 1000).toFixed(1) + 's';
-  }
+  if (state.startTime) dom.iElapsed.textContent = ((Date.now() - state.startTime) / 1000).toFixed(1) + 's';
 }, 100);
 </script>
 

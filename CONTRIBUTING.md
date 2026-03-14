@@ -1,40 +1,45 @@
 # Contributing to Ghost Pitch Engine
 
-3 roles, 1 HTML file, no build tools.
+3 roles, 4 files, no build tools.
+
+## File Structure
+
+```
+index.html          ← Config, state, DOM, TTS, crowd detection, event wiring
+js/llm.js           ← LLM framework (shared — don't break it)
+js/ghosts.js        ← Ghost generation (Dev 2's zone)
+js/show.js          ← Show runner, judging, Boo MC, OVERDRIVE (James's zone)
+CLAUDE.md           ← Agent instructions (read this if using Claude Code)
+HANDOFF.md          ← Architecture + work split + secrets
+CONTRIBUTING.md     ← This file
+```
 
 ## Roles
 
 ### Dev 2: Ghost Generation & Pitch Presentation
 
-You own `generateGhosts()` (~line 637) and the pitch display/narration.
-
-**Your zone:**
-- `generateGhosts()` — model fan-out, JSON parsing, ghost creation
-- The pitch TTS section inside `runShow()` (~line 906-913)
-- `CONFIG.featherless.models.corpus` — add/swap models
+**Your file:** `js/ghosts.js`
 
 **What to do:**
-1. Make `generateGhosts()` hit MORE Featherless models in parallel (there are 12,000+)
-2. Improve the ghost generation prompt — ghosts need wild personalities
-3. Make the pitch card visually pop when a ghost presents
+1. Edit `GHOST_PROMPT` to make ghost generation prompts more creative
+2. Add MORE models to `CONFIG.featherless.models.corpus` in `index.html` — `llmFanOut` hits all of them in parallel (12,000+ available at featherless.ai/models)
+3. Make the pitch card visually pop when a ghost presents (edit CSS in `index.html`)
 4. After generation, index pitches into Needle (see HANDOFF.md)
-5. Keep "Der Speisekarten-Geist" as the last failsafe ghost
+5. Keep `FAILSAFE_GHOST` ("Der Speisekarten-Geist") as the last ghost
 
 **Don't touch:**
-- `judgeGhost()`, `decideBuild()`, `booJudge()`, `summonChaosJudges()`
-- `listenToCrowd()` and crowd detection
-- `overdrive()`
+- `js/show.js` — judging, Boo, crowd, OVERDRIVE
+- `js/llm.js` — LLM framework (use it, don't change it without asking)
 
 **Test your changes:**
 ```bash
-# Deploy and test at the live URL (needs HTTPS for mic)
 git push origin main
 open https://hackathon-berlin-mar-2026.westover.lol
 ```
 
 ### Business: Ghost Judge Backstories
 
-You edit `CONFIG.judges` (~line 360) — the backstory strings.
+You edit `CONFIG.judges` in `index.html` — the backstory strings.
 
 **Each judge has:**
 ```javascript
@@ -54,32 +59,26 @@ You edit `CONFIG.judges` (~line 360) — the backstory strings.
 - Keep under 200 words — these go into LLM prompts
 
 **Also edit:**
-- `BOO.backstory` (~line 685) — the MC ghost's personality
+- `BOO.backstory` in `js/show.js` — the MC ghost's personality
 - Ghost names in `CONFIG.judges[].name` — make them spooky/funny
 
 ### James: Judging + Crowd + OVERDRIVE
 
-I own everything from crowd detection through build/deploy.
+**My file:** `js/show.js`
 
 **My zone:**
-- `listenToCrowd()` — Web Audio FFT
 - `judgeGhost()` — judge deliberation with Boo + core + chaos judges
 - `booJudge()`, `booSpeak()`, `summonChaosJudges()`
 - `decideBuild()` — BUILD/NO BUILD via Boo
 - `overdrive()` — build + deploy pipeline
+- `runShow()` — main flow orchestration
 - Needle integration for judge RAG context
 
-## File Structure
+**Also own in `index.html`:**
+- `listenToCrowd()` — Web Audio FFT crowd detection
+- Crowd detection config (`CONFIG.crowd`)
 
-```
-index.html          ← THE ENTIRE APP (single file, ~980 lines)
-HANDOFF.md          ← Architecture + work split + secrets
-CONTRIBUTING.md     ← This file
-```
-
-## Config Block (~line 324)
-
-All tunables are in `CONFIG` at the top of the `<script>` tag:
+## Config Block (in `index.html`)
 
 | Key | What | Who edits |
 |-----|------|-----------|
@@ -90,7 +89,6 @@ All tunables are in `CONFIG` at the top of the `<script>` tag:
 | `crowd.*` | FFT detection params | James |
 | `tts.*` | Speech rate/pitch defaults | anyone |
 | `judges[]` | Judge personas + backstories | Business |
-| `BOO` | MC ghost config (~line 680) | Business |
 
 ## Rules
 
@@ -98,4 +96,5 @@ All tunables are in `CONFIG` at the top of the `<script>` tag:
 2. **Keep it fast** — 2.5 minutes total for the presentation
 3. **TTS rate >= 1.1** — ghosts talk fast
 4. **Judge verdicts = 1 sentence** — `maxTokens: 60`
-5. **Test at the live URL** — local file:// won't work (needs HTTPS for mic)
+5. **Test at the live URL** — local `file://` won't work (needs HTTPS for mic)
+6. **Use the LLM framework** — never call `fetch()` to Featherless directly, use `llmCall`/`llmJSON`/`llmFanOut`/`llmStream`
