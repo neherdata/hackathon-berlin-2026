@@ -463,12 +463,14 @@ function updateInstrument({ model, tokens } = {}) {
 }
 
 // ============================================================
-// FEATHERLESS API
+// LLM FRAMEWORK — base primitives for all model calls
 // ============================================================
-async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024 } = {}) {
+
+// --- llmCall: single model, single response ---
+async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024, quiet = false } = {}) {
   const t0 = Date.now();
   updateInstrument({ model });
-  log(`Calling ${model.split('/').pop()}...`, { model });
+  if (!quiet) log(`Calling ${model.split('/').pop()}...`, { model });
 
   const res = await fetch(`${CONFIG.featherless.baseUrl}/chat/completions`, {
     method: 'POST',
@@ -476,12 +478,7 @@ async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024 } 
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${CONFIG.featherless.apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-    }),
+    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
   });
 
   if (!res.ok) {
@@ -496,9 +493,103 @@ async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024 } 
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
   updateInstrument({ model, tokens: usage });
-  log(`Response in ${elapsed}s`, { model, tokens: usage });
+  if (!quiet) log(`Response in ${elapsed}s`, { model, tokens: usage });
 
-  return { content, usage, elapsed };
+  return { content, usage, elapsed, model };
+}
+
+// --- llmJSON: call + extract + parse JSON, with retry ---
+async function llmJSON(model, messages, { temperature = 0.8, maxTokens = 512, retries = 1 } = {}) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const result = await llmCall(model, messages, { temperature, maxTokens, quiet: attempt > 0 });
+      // Extract JSON object or array from response
+      const objMatch = result.content.match(/\{[\s\S]*\}/);
+      const arrMatch = result.content.match(/\[[\s\S]*\]/);
+      const jsonStr = objMatch ? objMatch[0] : arrMatch ? arrMatch[0] : null;
+      if (!jsonStr) throw new Error('No JSON found in response');
+      return { ...result, parsed: JSON.parse(jsonStr) };
+    } catch (e) {
+      if (attempt === retries) {
+        log(`JSON parse failed after ${retries + 1} attempts: ${e.message}`, { model });
+        return { content: '', usage: 0, elapsed: '0', model, parsed: null };
+      }
+      log(`Retry ${attempt + 1}/${retries}...`, { model });
+    }
+  }
+}
+
+// --- llmFanOut: hit N models in parallel, collect successes ---
+async function llmFanOut(models, messages, { temperature = 0.9, maxTokens = 512, parseJSON = false } = {}) {
+  log(`Fan-out across ${models.length} models...`);
+  const fn = parseJSON ? llmJSON : llmCall;
+  const promises = models.map(model =>
+    fn(model, messages, { temperature, maxTokens, quiet: true })
+      .catch(e => { log(`${model.split('/').pop()} failed: ${e.message}`); return null; })
+  );
+  const results = await Promise.all(promises);
+  const successes = results.filter(r => r && (parseJSON ? r.parsed !== null : r.content));
+  log(`Fan-out: ${successes.length}/${models.length} succeeded`);
+  return successes;
+}
+
+// --- llmStream: streaming call for OVERDRIVE build log ---
+async function llmStream(model, messages, { temperature = 0.7, maxTokens = 2048, onChunk } = {}) {
+  updateInstrument({ model });
+  log(`Streaming from ${model.split('/').pop()}...`, { model });
+
+  const res = await fetch(`${CONFIG.featherless.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${CONFIG.featherless.apiKey}`,
+    },
+    body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: true }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Featherless stream ${res.status}: ${err}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let full = '';
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // keep incomplete line
+    for (const line of lines) {
+      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+      try {
+        const chunk = JSON.parse(line.slice(6));
+        const delta = chunk.choices?.[0]?.delta?.content || '';
+        if (delta) {
+          full += delta;
+          if (onChunk) onChunk(delta, full);
+        }
+      } catch {}
+    }
+  }
+
+  log(`Stream complete (${full.length} chars)`, { model });
+  return { content: full, model };
+}
+
+// --- llmPick: choose best model for a task ---
+function llmPick(purpose) {
+  const m = CONFIG.featherless.models;
+  switch (purpose) {
+    case 'fast':    return m.corpus[m.corpus.length - 1]; // last = fastest
+    case 'reason':  return m.corpus[0];                    // first = best reasoning
+    case 'random':  return m.corpus[Math.floor(Math.random() * m.corpus.length)];
+    case 'judge':   return Object.values(m.judges)[Math.floor(Math.random() * Object.values(m.judges).length)];
+    default:        return m.corpus[0];
+  }
 }
 
 // ============================================================
@@ -637,43 +728,42 @@ async function listenToCrowd() {
 }
 
 // ============================================================
-// GHOST GENERATION
+// GHOST GENERATION — Dev 2 customizes this section
 // ============================================================
+
+// Ghost generation prompt — Dev 2: edit this to shape ghost personalities
+const GHOST_PROMPT = {
+  system: 'You are a creative ghost at a hackathon. Return only valid JSON.',
+  user: `You are a ghost haunting a tech hackathon in Berlin. Generate ONE creative startup idea as a ghost character.
+
+Return ONLY valid JSON (no markdown, no code fences):
+{"name": "Ghost Name (spooky/funny)", "type": "The Ghost of [something]", "pitch": "2-3 sentence startup pitch", "tagline": "One catchy line"}`,
+};
+
+// Failsafe ghost — always added last
+const FAILSAFE_GHOST = {
+  name: 'Der Speisekarten-Geist',
+  type: 'The Ghost of Bad Translations',
+  pitch: 'Point your phone at any German restaurant menu and get instant cultural translations. Not just words — context, allergens, local tips, and pronunciation. Never order Handkäse by accident again.',
+  tagline: 'Lost in translation? This ghost eats menus for breakfast.',
+};
+
 async function generateGhosts() {
   setPhase('generating', 'SUMMONING GHOSTS');
   log('Summoning ghosts from the model swarm...');
 
   const models = CONFIG.featherless.models.corpus;
-  const prompt = `You are a ghost haunting a tech hackathon in Berlin. Generate ONE creative startup idea as a ghost character.
+  const messages = [
+    { role: 'system', content: GHOST_PROMPT.system },
+    { role: 'user', content: GHOST_PROMPT.user },
+  ];
 
-Return ONLY valid JSON (no markdown, no code fences):
-{"name": "Ghost Name (spooky/funny)", "type": "The Ghost of [something]", "pitch": "2-3 sentence startup pitch", "tagline": "One catchy line"}`;
+  // Fan out to all models, parse JSON responses
+  const results = await llmFanOut(models, messages, { temperature: 0.9, maxTokens: 256, parseJSON: true });
+  state.ghosts = results.map(r => r.parsed);
 
-  const promises = models.map(model =>
-    llmCall(model, [
-      { role: 'system', content: 'You are a creative ghost at a hackathon. Return only valid JSON.' },
-      { role: 'user', content: prompt },
-    ], { temperature: 0.9, maxTokens: 256 })
-    .then(({ content }) => {
-      try {
-        // Try to extract JSON from response
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-      } catch { return null; }
-    })
-    .catch(() => null)
-  );
-
-  const results = await Promise.all(promises);
-  state.ghosts = results.filter(Boolean);
-
-  // Always add failsafe
-  state.ghosts.push({
-    name: 'Der Speisekarten-Geist',
-    type: 'The Ghost of Bad Translations',
-    pitch: 'Point your phone at any German restaurant menu and get instant cultural translations. Not just words — context, allergens, local tips, and pronunciation. Never order Handkäse by accident again.',
-    tagline: 'Lost in translation? This ghost eats menus for breakfast.',
-  });
+  // Always add failsafe last
+  state.ghosts.push(FAILSAFE_GHOST);
 
   log(`${state.ghosts.length} ghosts summoned`);
   return state.ghosts;
@@ -700,13 +790,10 @@ async function booJudge(ghost, crowdScore) {
     : crowdScore.sentiment === 'dead' ? 'Nothing. Not a sound. The living don\'t care.'
     : 'The living are... confused.';
 
-  const { content } = await llmCall(
-    CONFIG.featherless.models.corpus[CONFIG.featherless.models.corpus.length - 1], // use fastest model
-    [
-      { role: 'system', content: `${BOO.backstory} Speak as Boo. ONE dramatic sentence about the crowd's reaction. Channel the energy.` },
-      { role: 'user', content: `The crowd just reacted to "${ghost.name}": ${crowdText} Energy: ${crowdScore.energy}%. Translate this for the judges.` },
-    ], { temperature: 0.9, maxTokens: 50 }
-  );
+  const { content } = await llmCall(llmPick('fast'), [
+    { role: 'system', content: `${BOO.backstory} Speak as Boo. ONE dramatic sentence about the crowd's reaction. Channel the energy.` },
+    { role: 'user', content: `The crowd just reacted to "${ghost.name}": ${crowdText} Energy: ${crowdScore.energy}%. Translate this for the judges.` },
+  ], { temperature: 0.9, maxTokens: 50 });
 
   return content;
 }
@@ -718,29 +805,24 @@ async function summonChaosJudges(ghost) {
   log('Boo is summoning chaos judges...');
   setPhase('chaos', 'SUMMONING CHAOS');
 
-  const { content } = await llmCall(
-    CONFIG.featherless.models.corpus[0],
-    [
-      { role: 'system', content: 'Generate 2 absurd ghost judge characters in JSON. Each has a name, a ridiculous backstory (1 sentence — how they died), and what they judge (1 sentence). Be unhinged and funny. Return ONLY a JSON array, no markdown.' },
-      { role: 'user', content: `These judges are evaluating: "${ghost.name}" — ${ghost.pitch}. Make them relevant but absurd.` },
-    ], { temperature: 1.0, maxTokens: 256 }
-  );
+  const result = await llmJSON(llmPick('reason'), [
+    { role: 'system', content: 'Generate 2 absurd ghost judge characters in JSON array. Each has a name, a ridiculous backstory (1 sentence — how they died), and what they judge (1 sentence). Be unhinged and funny. Return ONLY a JSON array, no markdown.' },
+    { role: 'user', content: `These judges are evaluating: "${ghost.name}" — ${ghost.pitch}. Make them relevant but absurd.` },
+  ], { temperature: 1.0, maxTokens: 256 });
 
-  try {
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    const chaosJudges = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-    return chaosJudges.slice(0, 2).map((j, i) => ({
+  if (result.parsed && Array.isArray(result.parsed)) {
+    return result.parsed.slice(0, 2).map((j, i) => ({
       name: j.name || `Chaos Ghost ${i + 1}`,
       backstory: j.backstory || 'Died of pure chaos.',
       judges: j.judges || j.what_they_judge || 'vibes',
       voiceIdx: 8 + i,
     }));
-  } catch {
-    return [
-      { name: 'Gary the Unpredictable', backstory: 'Died by tripping over a USB cable.', judges: 'whether the name sounds cool', voiceIdx: 8 },
-      { name: 'The Void', backstory: 'Was never born. Just appeared.', judges: 'cosmic relevance', voiceIdx: 9 },
-    ];
   }
+  // Fallback chaos judges
+  return [
+    { name: 'Gary the Unpredictable', backstory: 'Died by tripping over a USB cable.', judges: 'whether the name sounds cool', voiceIdx: 8 },
+    { name: 'The Void', backstory: 'Was never born. Just appeared.', judges: 'cosmic relevance', voiceIdx: 9 },
+  ];
 }
 
 // ============================================================
@@ -857,11 +939,11 @@ async function overdrive(ghost) {
   buildLog('');
   buildLog('Generating build spec...');
 
-  // Generate a detailed spec using Featherless
-  const { content: spec } = await llmCall(CONFIG.featherless.models.judges.critic, [
+  // Generate a detailed spec using Featherless (streaming for live build log)
+  const { content: spec } = await llmStream(llmPick('reason'), [
     { role: 'system', content: 'You are a senior engineer. Write a brief technical spec for a single-page web app. Include: what it does, the HTML structure, key JS functions needed. Keep it under 200 words. This will be fed to an AI coding agent.' },
     { role: 'user', content: `Build this app: ${ghost.name} — ${ghost.pitch}. It must be a single HTML file with embedded CSS and JS, mobile-friendly, deployable to Cloudflare Pages.` },
-  ], { maxTokens: 512 });
+  ], { maxTokens: 512, onChunk: (delta) => { dom.buildLog.textContent += delta; dom.buildLog.scrollTop = dom.buildLog.scrollHeight; } });
 
   buildLog('Spec generated');
   buildLog(spec.substring(0, 200) + '...');
