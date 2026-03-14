@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ghost Pitch Engine — Tests</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --card: #12121a;
+    --pass: #00ff88;
+    --fail: #ff4444;
+    --warn: #ffaa00;
+    --ghost: #8b5cf6;
+    --text: #e0e0e0;
+    --dim: #666;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    padding: 32px 24px;
+    font-size: 13px;
+  }
+  h1 { color: var(--ghost); font-size: 20px; margin-bottom: 8px; }
+  #summary {
+    margin: 16px 0;
+    font-size: 15px;
+    font-weight: bold;
+  }
+  #summary .pass-count { color: var(--pass); }
+  #summary .fail-count { color: var(--fail); }
+  #results { margin-top: 16px; }
+  .section { margin-bottom: 24px; }
+  .section-header {
+    color: var(--warn);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #222;
+    padding-bottom: 4px;
+  }
+  .test-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 3px 0;
+    border-bottom: 1px solid #111;
+  }
+  .badge {
+    font-size: 10px;
+    font-weight: bold;
+    width: 36px;
+    text-align: center;
+    flex-shrink: 0;
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+  .badge.pass { background: #003322; color: var(--pass); }
+  .badge.fail { background: #330000; color: var(--fail); }
+  .test-name { color: var(--text); flex: 1; }
+  .test-detail { color: var(--fail); font-size: 11px; }
+  #running {
+    color: var(--warn);
+    margin: 16px 0;
+    display: none;
+  }
+  #error-box {
+    background: #1a0000;
+    border: 1px solid var(--fail);
+    border-radius: 6px;
+    padding: 12px;
+    color: var(--fail);
+    margin: 16px 0;
+    display: none;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+
+<h1>Ghost Pitch Engine — Test Suite</h1>
+<p style="color: var(--dim)">No bundler. No framework. Just functions that return pass/fail.</p>
+
+<div id="running">Running tests...</div>
+<div id="error-box"></div>
+<div id="summary"></div>
+<div id="results"></div>
+
+<!-- ============================================================
+  STUBS — provide the minimal environment the app modules need
+  without requiring a real DOM or real API keys.
+  We define CONFIG, state, and stub functions BEFORE loading
+  the actual module files.
+============================================================ -->
+<script>
+// --- Minimal CONFIG stub (mirrors real CONFIG structure) ---
+const CONFIG = {
+  featherless: {
+    baseUrl: 'https://api.featherless.ai/v1',
+    apiKey: 'test-key',
+    models: {
+      corpus: [
+        'deepseek-ai/DeepSeek-V3-0324',
+        'deepseek-ai/DeepSeek-R1-0528',
+        'deepseek-ai/DeepSeek-V3.1',
+        'deepseek-ai/DeepSeek-V3.2',
+        'MiniMaxAI/MiniMax-M2.5',
+        'moonshotai/Kimi-K2-Instruct',
+        'moonshotai/Kimi-K2.5',
+        'mistralai/Mistral-Nemo-Instruct-2407',
+        'mistralai/Mistral-Large-Instruct-2411',
+        'Qwen/Qwen2-72B-Instruct',
+        'NousResearch/Meta-Llama-3-70B-Instruct',
+      ],
+      judges: {
+        carla: 'deepseek-ai/DeepSeek-V3-0324',
+        rod:   'moonshotai/Kimi-K2-Instruct',
+        dan:   'MiniMaxAI/MiniMax-M1-80k',
+      }
+    }
+  },
+  crowd: {
+    reactionWindowMs: 2000,
+    cheerBandHz: [2000, 8000],
+    booBandHz: [100, 500],
+    dudThreshold: 10,
+    fftSize: 2048,
+  },
+  tts: { rate: 1.0, pitch: 1.0 },
+  elevenlabs: {
+    apiKey: 'test-el-key',
+    baseUrl: 'https://api.elevenlabs.io/v1',
+    model: 'eleven_multilingual_v2',
+    enabled: false,
+    voices: {
+      boo: 'v-boo', carla: 'v-carla', rod: 'v-rod',
+      dan: 'v-dan', ghost: 'v-ghost', chaos1: 'v-c1', chaos2: 'v-c2',
+    },
+  },
+  needle: { apiKey: 'test-needle', baseUrl: 'https://api.needle.app/v1', collectionId: null },
+  overdrive: { jiraProject: 'FAM', deployDomain: 'westover.lol' },
+  judges: [
+    { key: 'carla', name: 'Karla von Strategos', voiceIdx: 2, backstory: 'BCG ghost.' },
+    { key: 'rod',   name: 'Prof Rodrigo VectorMax', voiceIdx: 4, backstory: 'AI ghost.' },
+    { key: 'dan',   name: 'Daniel Testflight', voiceIdx: 6, backstory: 'PM ghost.' },
+  ],
+};
+
+// --- Minimal state stub ---
+const state = {
+  phase: 'idle',
+  ghosts: [],
+  currentGhostIdx: -1,
+  crowdScores: [],
+  totalTokens: 0,
+  startTime: Date.now(),
+  audioCtx: null,
+  analyser: null,
+  micStream: null,
+};
+
+// --- Stub DOM helpers (no real DOM needed for unit tests) ---
+// setPhase only updates state.phase — we don't need real DOM in tests.
+// We redefine it here as a lightweight stub.
+function setPhase(phase, label) {
+  state.phase = phase;
+}
+
+// log() stub — silently discards in test context
+function log() {}
+
+// updateInstrument() stub
+function updateInstrument() {}
+</script>
+
+<!-- Load app modules (stubs already set up CONFIG/state/log/setPhase above) -->
+<script src="../js/llm.js"></script>
+<script src="../js/ghosts.js"></script>
+<!-- show.js omitted — it requires DOM elements and mic access not needed here -->
+
+<!-- Load and run tests -->
+<script src="tests.js"></script>
+<script>
+(async () => {
+  document.getElementById('running').style.display = 'block';
+  try {
+    const results = await runAllTests();
+
+    document.getElementById('running').style.display = 'none';
+
+    const passed = results.filter(r => r.pass).length;
+    const failed = results.filter(r => !r.pass).length;
+
+    const summaryEl = document.getElementById('summary');
+    summaryEl.innerHTML =
+      `<span class="pass-count">${passed} passed</span> / ` +
+      `<span class="fail-count">${failed} failed</span> ` +
+      `(${results.length} total)`;
+
+    // Group by implied section (we derive section from test name prefix)
+    const sections = {
+      'CONFIG': [],
+      'llmPick': [],
+      'llmJSON extraction': [],
+      'llmFanOut': [],
+      'FAILSAFE_GHOST': [],
+      'Ghost shape': [],
+      'Phase transitions': [],
+      'Ghost archetypes': [],
+      'Other': [],
+    };
+
+    for (const r of results) {
+      let placed = false;
+      for (const section of Object.keys(sections)) {
+        if (r.name.startsWith(section) || r.name.toLowerCase().startsWith(section.toLowerCase())) {
+          sections[section].push(r);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) sections['Other'].push(r);
+    }
+
+    const resultsEl = document.getElementById('results');
+    for (const [sectionName, rows] of Object.entries(sections)) {
+      if (rows.length === 0) continue;
+      const sectionDiv = document.createElement('div');
+      sectionDiv.className = 'section';
+      const header = document.createElement('div');
+      header.className = 'section-header';
+      const sectionPassed = rows.filter(r => r.pass).length;
+      header.textContent = `${sectionName} (${sectionPassed}/${rows.length})`;
+      sectionDiv.appendChild(header);
+      for (const r of rows) {
+        const row = document.createElement('div');
+        row.className = 'test-row';
+        const badge = document.createElement('span');
+        badge.className = `badge ${r.pass ? 'pass' : 'fail'}`;
+        badge.textContent = r.pass ? 'PASS' : 'FAIL';
+        const name = document.createElement('span');
+        name.className = 'test-name';
+        name.textContent = r.name;
+        row.appendChild(badge);
+        row.appendChild(name);
+        if (!r.pass && r.detail) {
+          const detail = document.createElement('span');
+          detail.className = 'test-detail';
+          detail.textContent = r.detail;
+          row.appendChild(detail);
+        }
+        sectionDiv.appendChild(row);
+      }
+      resultsEl.appendChild(sectionDiv);
+    }
+
+    // Expose on window for programmatic inspection
+    window.TEST_RESULTS = results;
+    window.TEST_SUMMARY = { passed, failed, total: results.length };
+
+  } catch (err) {
+    document.getElementById('running').style.display = 'none';
+    const box = document.getElementById('error-box');
+    box.style.display = 'block';
+    box.textContent = `Test runner crashed:\n${err.stack || err.message || err}`;
+    console.error(err);
+  }
+})();
+</script>
+
+</body>
+</html>

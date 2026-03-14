@@ -1,9 +1,11 @@
 // ============================================================
-// GHOST GENERATION — Dev 2's zone
-// Depends on: CONFIG, state, log(), setPhase(), llmFanOut()
+// GHOST GENERATION — seeded pitch engine
+// Generates a DUD pitch (intentionally bad) and a BUILDABLE pitch
+// (seeded with a direction, but LLM generates it live)
+// Depends on: CONFIG, state, log(), setPhase(), llmJSON(), llmPick()
 // ============================================================
 
-// Ghost archetypes — each model gets a different personality seed
+// Ghost archetypes — personality seeds
 const GHOST_ARCHETYPES = [
   'a burned-out Berlin startup founder who died pitching to VCs at 3am',
   'a rogue AI researcher who was deleted by their own experiment',
@@ -28,77 +30,55 @@ const GHOST_ARCHETYPES = [
   'a ghost who built ChainGPT — an autonomous AI agent that haunts competitor infrastructure — and died when it turned on them',
   'a ghost who built DeathFlow — Notion for the afterlife delegating dead peoples tasks to the living — and died with 47 open tasks',
 ];
-];
 
-// Ghost generation prompt — rich, personality-driven
-const GHOST_PROMPT = {
-  system: `You are a dead startup founder haunting a tech hackathon in Berlin, March 2026. You died in a ridiculous tech-related way and now you channel your unfinished business into ONE startup idea.
+// Seed for the BUILDABLE pitch — steers LLM toward a known-good direction
+// but the LLM generates the actual idea, pitch, and personality
+const BUILDABLE_SEED = `The idea should be a simple, visual, interactive web app that could realistically be built in under 5 minutes as a single HTML file. Think: an interactive Berlin startup map, a real-time voting dashboard, a ghost-themed todo app, or a haunted location finder. It MUST be something a code-generating AI can build as one self-contained HTML page with embedded JS and CSS.`;
 
-Rules:
-- Your pitch must be a REAL, buildable idea (not a joke product)
-- Your ghost personality should shine through the pitch
-- Berlin/Europe context is a plus but not required
-- Be creative, funny, and a little unhinged
-- Return ONLY valid JSON, no markdown, no code fences`,
-
-  user: (archetype) => `You are ${archetype}.
-
-Generate your ghost character and startup pitch as JSON:
-{"name": "Your Ghost Name (creative, spooky-funny)", "type": "The Ghost of [something relevant to how you died]", "pitch": "Your 2-3 sentence startup pitch. Make it compelling — the audience will cheer or boo you, and ghost judges will decide if it gets BUILT LIVE on stage.", "tagline": "One killer tagline that haunts the audience"}`,
-};
-
-// Failsafe ghost — always added last
+// Failsafe ghost — always available
 const FAILSAFE_GHOST = {
   name: 'Der Speisekarten-Geist',
   type: 'The Ghost of Bad Translations',
-  pitch: 'Point your phone at any German restaurant menu and get instant cultural translations. Not just words — context, allergens, local tips, and pronunciation. Never order Handkäse by accident again.',
+  pitch: 'Point your phone at any German restaurant menu and get instant cultural translations. Not just words — context, allergens, local tips, and pronunciation.',
   tagline: 'Lost in translation? This ghost eats menus for breakfast.',
 };
 
+// Generate a DUD ghost (intentionally bad idea)
+async function generateDud() {
+  log('Generating dud pitch...');
+  const archetype = GHOST_ARCHETYPES[Math.floor(Math.random() * GHOST_ARCHETYPES.length)];
+
+  const result = await llmJSON(llmPick('fast'), [
+    { role: 'system', content: `You are a dead startup founder at a hackathon in Berlin. You died in a ridiculous way. Generate a TERRIBLE startup idea — something that sounds impressive but is completely useless, over-engineered, or solves a non-problem. Make it funny. Return ONLY valid JSON, no markdown.` },
+    { role: 'user', content: `You are ${archetype}.\n\nGenerate your ghost and your TERRIBLE startup pitch as JSON:\n{"name": "Ghost Name", "type": "The Ghost of [something]", "pitch": "1-2 sentence terrible idea", "tagline": "One terrible tagline"}` },
+  ], { temperature: 1.0, maxTokens: 200 });
+
+  if (result.parsed) return result.parsed;
+  return { name: 'Error Ghost', type: 'The Ghost of Bad APIs', pitch: 'An AI that generates other AIs that generate other AIs. It is AIs all the way down.', tagline: 'Recursion as a service.' };
+}
+
+// Generate a BUILDABLE ghost (seeded with good direction)
+async function generateBuildable() {
+  log('Seeding buildable pitch...');
+  const archetype = GHOST_ARCHETYPES[Math.floor(Math.random() * GHOST_ARCHETYPES.length)];
+
+  const result = await llmJSON(llmPick('reason'), [
+    { role: 'system', content: `You are a dead startup founder at a hackathon in Berlin. You died in a ridiculous way but your idea is ACTUALLY GOOD. ${BUILDABLE_SEED} Return ONLY valid JSON, no markdown.` },
+    { role: 'user', content: `You are ${archetype}.\n\nGenerate your ghost and a GENUINELY GOOD startup pitch as JSON:\n{"name": "Ghost Name", "type": "The Ghost of [something]", "pitch": "2-3 sentence compelling pitch for a buildable webapp", "tagline": "One killer tagline", "buildHint": "1 sentence technical description of what to build — single HTML file with embedded CSS/JS"}` },
+  ], { temperature: 0.85, maxTokens: 300 });
+
+  if (result.parsed) return result.parsed;
+  return FAILSAFE_GHOST;
+}
+
+// Generate both pitches in parallel
 async function generateGhosts() {
   setPhase('generating', 'SUMMONING GHOSTS');
   log('Summoning ghosts from the model swarm...');
 
-  const models = CONFIG.featherless.models.corpus;
+  const [dud, buildable] = await Promise.all([generateDud(), generateBuildable()]);
 
-  // Each model gets a different archetype for variety
-  const calls = models.map((model, i) => {
-    const archetype = GHOST_ARCHETYPES[i % GHOST_ARCHETYPES.length];
-    const messages = [
-      { role: 'system', content: GHOST_PROMPT.system },
-      { role: 'user', content: GHOST_PROMPT.user(archetype) },
-    ];
-    return { model, messages };
-  });
-
-  // Fan out with concurrency limit (Featherless allows 4 concurrent, keep 1 free)
-  const concurrency = 3;
-  log(`Fan-out across ${calls.length} models (max ${concurrency} concurrent)...`);
-  const results = [];
-  const queue = [...calls];
-
-  async function worker() {
-    while (queue.length > 0) {
-      const { model, messages } = queue.shift();
-      try {
-        const result = await llmJSON(model, messages, { temperature: 0.95, maxTokens: 300, quiet: true });
-        results.push(result);
-      } catch (e) {
-        log(`${model.split('/').pop()} failed: ${e.message}`);
-        results.push(null);
-      }
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(concurrency, calls.length) }, () => worker()));
-  const successes = results.filter(r => r && r.parsed);
-  log(`Fan-out: ${successes.length}/${calls.length} succeeded`);
-
-  state.ghosts = successes.map(r => r.parsed);
-
-  // Always add failsafe last
-  state.ghosts.push(FAILSAFE_GHOST);
-
-  log(`${state.ghosts.length} ghosts summoned`);
+  state.ghosts = [dud, buildable];
+  log(`Dud: "${dud.name}" | Buildable: "${buildable.name}"`);
   return state.ghosts;
 }

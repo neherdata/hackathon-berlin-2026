@@ -298,13 +298,15 @@
   <!-- Judge panel -->
   <div class="judge-panel hidden" id="judge-panel"></div>
 
-  <!-- OVERDRIVE -->
-  <div id="overdrive-panel">
-    <h2>OVERDRIVE</h2>
-    <div id="build-log"></div>
-    <div id="qr-container">
-      <p style="color: var(--accent); font-size: 18px; margin-bottom: 12px;" id="deploy-url"></p>
-    </div>
+  <!-- Demo iframe -->
+  <iframe id="demo-frame" class="hidden" style="width:100%;max-width:700px;height:500px;border:1px solid var(--accent);border-radius:12px;background:#000;"></iframe>
+
+  <!-- Superchat stats -->
+  <div id="superchat-stats" class="hidden" style="width:100%;max-width:700px;background:var(--card);border:1px solid #222;border-radius:8px;padding:16px;text-align:center;"></div>
+
+  <!-- QR / URL -->
+  <div id="qr-container" style="text-align:center;display:none;">
+    <p style="color: var(--accent); font-size: 14px; margin-bottom: 12px;" id="deploy-url"></p>
   </div>
 
   <!-- Transcript -->
@@ -433,8 +435,6 @@ const dom = {
   crowdTimer:  $('#crowd-timer'),
   crowdSentiment: $('#crowd-sentiment'),
   judgePanel:  $('#judge-panel'),
-  overdrive:   $('#overdrive-panel'),
-  buildLog:    $('#build-log'),
   deployUrl:   $('#deploy-url'),
   qrContainer: $('#qr-container'),
   transcript:  $('#transcript'),
@@ -633,9 +633,6 @@ async function listenToCrowd() {
 // EVENT LISTENERS — wires everything together
 // ============================================================
 dom.btnStart.addEventListener('click', runShow);
-dom.btnOverdrive.addEventListener('click', () => {
-  if (state.currentGhostIdx >= 0) overdrive(state.ghosts[state.currentGhostIdx]);
-});
 dom.btnSkip.addEventListener('click', () => speechSynthesis.cancel());
 setInterval(() => {
   if (state.startTime) {

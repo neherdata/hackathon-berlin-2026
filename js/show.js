@@ -1,108 +1,148 @@
 // ============================================================
 // SHOW RUNNER — James's zone
-// NEW FLOW: 1 ghost → dud pitch → crowd + judge feedback → pivot → OVERDRIVE
-// Depends on: CONFIG, state, dom, log(), setPhase(), speak(),
-//             llmCall(), llmJSON(), llmStream(), llmPick(),
-//             generateGhosts(), initMic(), listenToCrowd()
+// FLOW: dud pitch → 1 judge roast → PARALLEL build real project
+//       → reveal demo → superchat → judges + feedback → incorporate → done
 // ============================================================
 
-// --- TIMING BUDGET ---
-// ElevenLabs at 1.1x speed ≈ 15 chars/sec. Total show: 150s (2.5 min)
+// --- TIMING ---
 const TIMING = {
-  charsPerSec: 15,          // ElevenLabs throughput at 1.1x
-  showMaxSec: 150,          // 2.5 minute hard cap
-  phases: {                 // time budget per phase (seconds)
-    intro: 12,              // Boo intro
-    generate: 8,            // ghost generation (network)
-    pitch: 10,              // ghost pitches
-    crowd: 2,               // crowd reaction window
-    feedback: 25,           // boo + 2 judges speak
-    pivot: 15,              // ghost incorporates feedback
-    overdrive: 40,          // build spec stream
-  },
+  charsPerSec: 15,
+  showMaxSec: 150,
 };
 
-// Estimate TTS duration in seconds from text
-function estimateTTS(text) {
-  return Math.ceil(text.length / TIMING.charsPerSec);
-}
+function estimateTTS(text) { return Math.ceil(text.length / TIMING.charsPerSec); }
 
-// Trim text to fit a time budget (seconds), cutting at sentence boundary
 function trimToTime(text, maxSec) {
   const maxChars = maxSec * TIMING.charsPerSec;
   if (text.length <= maxChars) return text;
-  const trimmed = text.slice(0, maxChars);
-  const lastPeriod = trimmed.lastIndexOf('.');
-  const lastExcl = trimmed.lastIndexOf('!');
-  const lastQ = trimmed.lastIndexOf('?');
-  const cutAt = Math.max(lastPeriod, lastExcl, lastQ);
-  return cutAt > maxChars * 0.5 ? trimmed.slice(0, cutAt + 1) : trimmed + '...';
+  const t = text.slice(0, maxChars);
+  const cut = Math.max(t.lastIndexOf('.'), t.lastIndexOf('!'), t.lastIndexOf('?'));
+  return cut > maxChars * 0.5 ? t.slice(0, cut + 1) : t + '...';
 }
 
-// How many seconds remain in the show
 function showTimeLeft() {
   if (!state.startTime) return TIMING.showMaxSec;
   return Math.max(0, TIMING.showMaxSec - (Date.now() - state.startTime) / 1000);
 }
 
-// --- BOO: MC, Audience Judge, Announcer ---
+// --- BOO ---
 const BOO = {
   name: 'Boo',
   voiceIdx: 0,
   pitch: 0.6,
   rate: 1.1,
-  backstory: 'You are Boo, the Ghost Host. You are the MC, the audience\'s voice, and the final announcer. You interpret crowd energy — cheers, boos, silence — and translate it into ghost verdicts. You are theatrical, dramatic, and a little unhinged. You love chaos.',
+  backstory: 'You are Boo, the Ghost Host — theatrical, dramatic, unhinged. You love chaos and you love watching ghosts fail.',
 };
 
 async function booSpeak(text) {
-  const trimmed = trimToTime(text, Math.min(TIMING.phases.intro, showTimeLeft()));
-  log(`TTS est: ${estimateTTS(trimmed)}s for ${trimmed.length} chars`);
+  const trimmed = trimToTime(text, 12);
   await speak(trimmed, { voiceIndex: BOO.voiceIdx, rate: BOO.rate, pitch: BOO.pitch, elVoice: CONFIG.elevenlabs.voices.boo });
 }
 
-// --- JUDGE FEEDBACK (not verdict — constructive roast) ---
-async function getJudgeFeedback(ghost, crowdScore) {
+// --- BUILD ENGINE: generate project code via LLM ---
+async function buildProject(ghost) {
+  log('BUILD: Generating project code...');
+  const buildHint = ghost.buildHint || ghost.pitch;
+
+  const result = await llmCall(llmPick('reason'), [
+    { role: 'system', content: `You are a senior frontend engineer. Generate a COMPLETE, working single-page web app as one HTML file. Include ALL HTML, CSS, and JS inline. The app must work when opened directly in a browser. Use modern CSS (flexbox/grid), vanilla JS, no external dependencies except CDN libraries like Leaflet if needed for maps. Make it visually polished with a dark theme. Return ONLY the HTML code, nothing else — no markdown fences, no explanation.` },
+    { role: 'user', content: `Build this app: ${ghost.name} — ${ghost.pitch}\n\nTechnical hint: ${buildHint}\n\nRequirements:\n- Single HTML file, fully self-contained\n- Dark theme (#0a0a0f background)\n- Mobile-friendly\n- Interactive and visually impressive\n- Must work immediately when opened` },
+  ], { temperature: 0.7, maxTokens: 4096 });
+
+  return result.content;
+}
+
+// Inject built code into the demo iframe
+function showDemo(html) {
+  const iframe = document.getElementById('demo-frame');
+  iframe.classList.remove('hidden');
+  iframe.srcdoc = html;
+  dom.ghostCard.classList.add('hidden');
+  log('BUILD: Demo loaded into iframe');
+}
+
+// --- REBUILD with feedback ---
+// Returns { code, incorporated } — incorporated = which suggestions made it in
+async function rebuildWithFeedback(ghost, originalCode, judgeFeedback, superchatFeedback) {
+  log('REBUILD: Incorporating feedback...');
+
+  const feedbackContext = `Judge feedback:\n${judgeFeedback}\n\nAudience superchat feedback:\n${superchatFeedback}`;
+
+  // First: pick which suggestions to incorporate
+  const pickResult = await llmJSON(llmPick('fast'), [
+    { role: 'system', content: 'You are a product manager. Given feedback from judges and audience, pick the 2-3 most impactful and buildable suggestions. Return JSON: {"incorporated": [{"from": "name", "suggestion": "what", "reason": "why"}], "skipped": ["reason1"]}' },
+    { role: 'user', content: feedbackContext },
+  ], { temperature: 0.5, maxTokens: 200 });
+
+  const incorporated = pickResult.parsed?.incorporated || [];
+
+  // Show which suggestions are being incorporated
+  showIncorporated(incorporated);
+
+  // Then: rebuild with selected feedback
+  const selectedFeedback = incorporated.map(i => `${i.from}: ${i.suggestion}`).join('\n');
+
+  const result = await llmCall(llmPick('reason'), [
+    { role: 'system', content: 'You are a senior frontend engineer. Update this web app to incorporate the selected feedback. Return ONLY the complete updated HTML file — no markdown fences, no explanation, just HTML.' },
+    { role: 'user', content: `App: ${ghost.name} — ${ghost.pitch}\n\nFeedback to incorporate:\n${selectedFeedback}\n\nCurrent code:\n${originalCode}\n\nReturn the complete updated HTML:` },
+  ], { temperature: 0.7, maxTokens: 4096 });
+
+  return { code: result.content, incorporated };
+}
+
+// Show which user suggestions are being incorporated
+function showIncorporated(items) {
+  const statsEl = document.getElementById('superchat-stats');
+  if (!statsEl || !items.length) return;
+  statsEl.innerHTML += `
+    <div style="margin-top: 16px; text-align: left;">
+      <h3 style="color: var(--accent);">INCORPORATING</h3>
+      ${items.map(i => `
+        <div style="background: #1a1a2e; border-radius: 8px; padding: 12px; margin: 8px 0; border-left: 3px solid var(--accent);">
+          <div style="color: var(--ghost); font-size: 11px; text-transform: uppercase;">${i.from}</div>
+          <div style="color: var(--text); margin-top: 4px;">${i.suggestion}</div>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+// --- SUPERCHAT: fetch audience feedback ---
+async function fetchSuperchat() {
+  try {
+    const res = await fetch('/api/feedback');
+    const data = await res.json();
+    return data.recent || [];
+  } catch {
+    return [];
+  }
+}
+
+function formatSuperchat(messages) {
+  if (!messages.length) return 'No audience feedback yet.';
+  return messages.map(m => `${m.name}: "${m.text}"`).join('\n');
+}
+
+// --- JUDGE FEEDBACK ---
+async function getJudgeFeedback(ghost) {
   const models = Object.values(CONFIG.featherless.models.judges);
-  const coreJudges = CONFIG.judges.map((j, i) => ({
+  const judges = CONFIG.judges.map((j, i) => ({
     ...j,
     model: models[i % models.length],
-    style: j.backstory,
   }));
 
   dom.judgePanel.innerHTML = '';
   dom.judgePanel.classList.remove('hidden');
 
-  // Boo translates crowd reaction
-  const crowdText = crowdScore.sentiment === 'cheer' ? 'The living actually liked this dud?!'
-    : crowdScore.sentiment === 'boo' ? 'The living have spoken — this idea STINKS.'
-    : crowdScore.sentiment === 'dead' ? 'Nothing. Dead silence. Even worse.'
-    : 'The crowd is confused. Fix this.';
-
-  const booReaction = await llmCall(llmPick('fast'), [
-    { role: 'system', content: `${BOO.backstory} The ghost just pitched a terrible idea. The crowd reacted. Summarize the crowd's feeling in ONE sentence and tell the ghost to listen to the judges for how to fix it.` },
-    { role: 'user', content: `Ghost "${ghost.name}" pitched: "${ghost.pitch}". Crowd: ${crowdText} Energy: ${crowdScore.energy}%.` },
-  ], { temperature: 0.9, maxTokens: 50 });
-
-  const booCard = document.createElement('div');
-  booCard.className = 'judge-card';
-  booCard.style.borderColor = 'var(--warn)';
-  booCard.innerHTML = `<h3 style="color: var(--warn)">Boo (The Crowd)</h3><div class="verdict">${booReaction.content}</div>`;
-  dom.judgePanel.appendChild(booCard);
-  setPhase('feedback', 'BOO SPEAKS');
-  await booSpeak(booReaction.content);
-
-  const crowdContext = `Boo says: "${booReaction.content}" (crowd energy: ${crowdScore.energy}%, sentiment: ${crowdScore.sentiment})`;
-
-  // Fire all judge LLM calls in parallel, display + speak round-robin (pick 1-2 to read aloud)
-  const feedbackPromises = coreJudges.map(async (judge) => {
+  // Fire all judge calls in parallel
+  const feedbackPromises = judges.map(async (judge) => {
     const card = document.createElement('div');
     card.className = 'judge-card';
     card.innerHTML = `<h3>${judge.name}</h3><div class="verdict">Thinking...</div>`;
     dom.judgePanel.appendChild(card);
 
     const { content } = await llmCall(judge.model, [
-      { role: 'system', content: `You are ${judge.name}, a ghost judge at a hackathon. ${judge.style} The ghost pitched a DUD idea. Give ONE specific, actionable piece of feedback to make it better. Be constructive but roast-y. ONE sentence.` },
-      { role: 'user', content: `Ghost: "${ghost.name}" pitched: "${ghost.pitch}"\n\n${crowdContext}\n\nYour ONE feedback to improve this idea:` },
+      { role: 'system', content: `You are ${judge.name}, a ghost judge. ${judge.backstory} Give ONE specific, actionable piece of feedback on this project. What would make it better? ONE sentence, constructive but spicy.` },
+      { role: 'user', content: `Ghost project: "${ghost.name}" — ${ghost.pitch}` },
     ], { temperature: 0.8, maxTokens: 60 });
 
     card.querySelector('.verdict').textContent = content;
@@ -111,82 +151,30 @@ async function getJudgeFeedback(ghost, crowdScore) {
 
   const feedbacks = await Promise.all(feedbackPromises);
 
-  // Speak 1-2 judges — fewer if running low on time
-  const remaining = showTimeLeft();
-  const speakCount = remaining < 60 ? 1 : Math.min(2, feedbacks.length);
-  log(`Time left: ${remaining.toFixed(0)}s — ${speakCount} judge(s) will speak`);
+  // Speak 1-2 judges
+  const speakCount = showTimeLeft() < 60 ? 1 : Math.min(2, feedbacks.length);
   for (let i = 0; i < speakCount; i++) {
     const { judge, content } = feedbacks[i];
-    const trimmed = trimToTime(content, 8); // max 8s per judge
-    setPhase('feedback', `JUDGE: ${judge.name.toUpperCase()}`);
+    const trimmed = trimToTime(content, 8);
     await speak(trimmed, { voiceIndex: judge.voiceIdx, rate: 1.2, elVoice: CONFIG.elevenlabs.voices[judge.key] });
   }
 
   return feedbacks.map(f => `${f.judge.name}: "${f.content}"`).join('\n');
 }
 
-// --- GHOST PIVOT: incorporate feedback into improved idea ---
-async function pivotGhost(ghost, feedbackSummary, crowdScore) {
-  setPhase('pivot', 'GHOST IS PIVOTING');
-  log('Ghost incorporating feedback...');
-
-  const { content } = await llmCall(llmPick('reason'), [
-    { role: 'system', content: `You are ${ghost.name}, ${ghost.type}. You pitched a bad idea and got roasted. PIVOT — take their feedback and pitch something ACTUALLY good. 2 sentences max: acknowledge, then pitch the improved version.` },
-    { role: 'user', content: `Your original pitch: "${ghost.pitch}"\n\nJudge feedback:\n${feedbackSummary}\n\nCrowd sentiment: ${crowdScore.sentiment} (${crowdScore.energy}% energy)\n\nPivot — make it work:` },
-  ], { temperature: 0.8, maxTokens: 100 });
-
-  // Update ghost card with pivoted idea
-  ghost.originalPitch = ghost.pitch;
-  ghost.pitch = content;
-  dom.ghostPitch.textContent = content;
-  dom.ghostCard.style.borderColor = 'var(--accent)';
-
-  const pivotTrimmed = trimToTime(content, TIMING.phases.pivot);
-  log(`PIVOT (${estimateTTS(pivotTrimmed)}s): ${pivotTrimmed}`);
-  await speak(pivotTrimmed, { voiceIndex: 3, rate: 1.15, elVoice: CONFIG.elevenlabs.voices.ghost });
-
-  return content;
-}
-
-// --- OVERDRIVE ---
-async function overdrive(ghost) {
-  setPhase('overdrive', 'OVERDRIVE');
-  dom.overdrive.style.display = 'block';
-  dom.buildLog.textContent = '';
-
-  function buildLog(msg) {
-    const ts = ((Date.now() - state.startTime) / 1000).toFixed(1);
-    dom.buildLog.textContent += `[${ts}s] ${msg}\n`;
-    dom.buildLog.scrollTop = dom.buildLog.scrollHeight;
-    log(msg);
-  }
-
-  buildLog('OVERDRIVE ENGAGED');
-  buildLog(`Building: ${ghost.name}`);
-  buildLog(`Original (dud): ${ghost.originalPitch || 'n/a'}`);
-  buildLog(`Pivoted pitch: ${ghost.pitch}`);
-  buildLog('');
-  buildLog('Generating build spec...');
-
-  const { content: spec } = await llmStream(llmPick('reason'), [
-    { role: 'system', content: 'You are a senior engineer. Write a brief technical spec for a single-page web app. Include: what it does, the HTML structure, key JS functions needed. Keep it under 200 words. This will be fed to an AI coding agent.' },
-    { role: 'user', content: `Build this app: ${ghost.name} — ${ghost.pitch}. It must be a single HTML file with embedded CSS and JS, mobile-friendly, deployable to Cloudflare Pages.` },
-  ], { maxTokens: 512, onChunk: (delta) => { dom.buildLog.textContent += delta; dom.buildLog.scrollTop = dom.buildLog.scrollHeight; } });
-
-  buildLog('');
-  buildLog('Spec generated');
-  buildLog('');
-  buildLog('Triggering build agent via Jira...');
-  buildLog('');
-  buildLog('=== BUILD SPEC READY ===');
-  buildLog('Waiting for agent to build and deploy...');
-  buildLog(`Target: https://${ghost.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${CONFIG.overdrive.deployDomain}`);
-
-  await speak(`Building ${ghost.name}. Stand by.`, { rate: 0.9, pitch: 0.7, elVoice: CONFIG.elevenlabs.voices.boo });
+// --- SHOW SUPERCHAT STATS ---
+function showSuperchatStats(messages) {
+  const statsEl = document.getElementById('superchat-stats');
+  if (!statsEl) return;
+  statsEl.classList.remove('hidden');
+  statsEl.innerHTML = `<h3 style="color: var(--warn)">SUPERCHAT</h3>
+    <div style="color: var(--accent); font-size: 24px; margin: 8px 0">${messages.length} messages</div>
+    <div style="color: var(--dim); font-size: 12px; max-height: 100px; overflow-y: auto">
+      ${messages.slice(-5).map(m => `<div><b>${m.name}</b>: ${m.text}</div>`).join('')}
+    </div>`;
 }
 
 // --- MAIN SHOW FLOW ---
-// New flow: 1 ghost → dud pitch → crowd feedback → judge feedback → pivot → OVERDRIVE
 async function runShow() {
   state.startTime = Date.now();
   dom.btnStart.style.display = 'none';
@@ -194,48 +182,110 @@ async function runShow() {
 
   await initMic();
 
-  // Boo intro
+  // === PHASE 1: INTRO + GENERATE ===
   setPhase('intro', 'BOO MC');
-  log('Boo taking the stage...');
-  await booSpeak(
-    "Welcome, mortals. A ghost is about to pitch a terrible idea. " +
-    "Cheer, boo, scream. The judges will roast it. " +
-    "Then we fix it and build it live. Let the haunting begin."
-  );
+  // Generate ghosts AND intro in parallel
+  const [, ghosts] = await Promise.all([
+    booSpeak("Welcome, mortals. A ghost will pitch a terrible idea. We'll roast it. Then we build something REAL. Live. Right now."),
+    generateGhosts(),
+  ]);
 
-  // Generate ghosts (fan-out still runs, but we pick the first one)
-  await generateGhosts();
-  const ghost = state.ghosts[0];
-  state.currentGhostIdx = 0;
+  const dud = state.ghosts[0];
+  const buildable = state.ghosts[1];
+
+  // === PHASE 2: DUD PITCH + FAST ROAST + PARALLEL BUILD ===
+  // Show dud ghost card
+  setPhase('pitch', 'DUD PITCH');
+  dom.ghostCard.classList.remove('hidden');
+  dom.ghostName.textContent = dud.name;
+  dom.ghostType.textContent = dud.type;
+  dom.ghostPitch.textContent = dud.pitch;
+
+  // Start building the REAL project in background (this is the magic)
+  const buildPromise = buildProject(buildable);
+  log('BUILD: Started in background while dud is being roasted...');
 
   // Ghost pitches the dud
-  setPhase('pitch', 'GHOST PITCH');
-  dom.ghostCard.classList.remove('hidden');
-  dom.ghostName.textContent = ghost.name;
-  dom.ghostType.textContent = ghost.type;
-  dom.ghostPitch.textContent = ghost.pitch;
-  log(`Ghost: ${ghost.name}`);
+  await speak(`I am ${dud.name}. ${dud.pitch}`, { voiceIndex: 1, rate: 1.15, elVoice: CONFIG.elevenlabs.voices.ghost });
 
-  await speak(`I am ${ghost.name}. ${ghost.pitch}`, { voiceIndex: 1, rate: 1.15, elVoice: CONFIG.elevenlabs.voices.ghost });
+  // Fast judge roast on the dud
+  setPhase('roast', 'ROASTING THE DUD');
+  const roastJudge = CONFIG.judges[Math.floor(Math.random() * CONFIG.judges.length)];
+  const { content: roast } = await llmCall(
+    Object.values(CONFIG.featherless.models.judges)[0],
+    [
+      { role: 'system', content: `You are ${roastJudge.name}. ${roastJudge.backstory} This idea is TERRIBLE. Roast it in ONE savage sentence.` },
+      { role: 'user', content: `Ghost pitched: "${dud.name}" — ${dud.pitch}. Destroy this idea:` },
+    ],
+    { temperature: 0.9, maxTokens: 40 }
+  );
+  log(`ROAST: ${roast}`);
+  await speak(roast, { voiceIndex: roastJudge.voiceIdx, rate: 1.2, elVoice: CONFIG.elevenlabs.voices[roastJudge.key] });
 
-  // Crowd reacts
-  const crowdScore = await listenToCrowd();
+  // Wait for build to finish (should be done by now — we had ~20s of TTS cover)
+  setPhase('building', 'BUILDING...');
+  await booSpeak("But wait. Another ghost has been building something REAL.");
+  let builtCode = await buildPromise;
 
-  // Judges give feedback (constructive roast)
-  setPhase('feedback', 'JUDGE FEEDBACK');
-  const feedbackSummary = await getJudgeFeedback(ghost, crowdScore);
+  // === PHASE 3: REVEAL DEMO + OPEN SUPERCHAT ===
+  setPhase('reveal', 'REVEALING BUILD');
 
-  // Ghost pivots
-  const pivotedPitch = await pivotGhost(ghost, feedbackSummary, crowdScore);
+  // Update ghost card to show buildable pitch
+  dom.ghostName.textContent = buildable.name;
+  dom.ghostType.textContent = buildable.type;
+  dom.ghostPitch.textContent = buildable.pitch;
 
-  // Boo closes the show
-  const timeLeft = showTimeLeft();
-  if (timeLeft > 10) {
-    await booSpeak("The ghost has been redeemed. The idea lives. That's the show, mortals.");
-  } else {
-    await booSpeak("Redeemed.");
-  }
+  // Show the built demo
+  showDemo(builtCode);
 
+  // Show superchat QR / link
+  const superchatUrl = `${window.location.origin}/superchat.html`;
+  log(`Superchat: ${superchatUrl}`);
+  await booSpeak("Mortals! Open your phones. Go to the superchat. Tell us what you think.");
+
+  // Show QR code
+  dom.qrContainer.style.display = 'block';
+  dom.deployUrl.textContent = superchatUrl;
+  dom.deployUrl.style.fontSize = '14px';
+  const qrImg = document.createElement('img');
+  qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(superchatUrl)}&bgcolor=0a0a0f&color=8b5cf6`;
+  qrImg.alt = 'Superchat QR';
+  dom.qrContainer.appendChild(qrImg);
+
+  // Wait for audience feedback (give them time)
+  await new Promise(r => setTimeout(r, 8000));
+
+  // === PHASE 4: JUDGES EVALUATE + INCORPORATE FEEDBACK ===
+  setPhase('judging', 'JUDGES + FEEDBACK');
+
+  // Fetch superchat feedback
+  const superchatMessages = await fetchSuperchat();
+  showSuperchatStats(superchatMessages);
+  const superchatText = formatSuperchat(superchatMessages);
+
+  // Start rebuild with feedback in background (before judges even finish speaking)
+  // Judges evaluate the REAL project — their LLM calls happen now
+  const judgeFeedbackPromise = getJudgeFeedback(buildable);
+
+  // Wait for judge feedback
+  const judgeFeedback = await judgeFeedbackPromise;
+
+  // Start rebuild incorporating ALL feedback
+  setPhase('rebuilding', 'INCORPORATING FEEDBACK');
+  log('REBUILD: Judges + superchat feedback → updated build');
+  const rebuildPromise = rebuildWithFeedback(buildable, builtCode, judgeFeedback, superchatText);
+
+  await booSpeak("The feedback is in. The ghost is rebuilding.");
+
+  const { code: updatedCode, incorporated } = await rebuildPromise;
+  log(`REBUILD: ${incorporated.length} suggestions incorporated`);
+
+  // Show updated demo
+  showDemo(updatedCode);
+
+  // === PHASE 5: CLOSE ===
   setPhase('done', 'SHOW COMPLETE');
-  log(`Show complete in ${((Date.now() - state.startTime) / 1000).toFixed(1)}s`);
+  const elapsed = ((Date.now() - state.startTime) / 1000).toFixed(1);
+  log(`Show complete in ${elapsed}s`);
+  await booSpeak("Done. Built live. Feedback incorporated. The ghost is redeemed.");
 }
