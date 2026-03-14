@@ -131,13 +131,17 @@ async function llmFanOut(models, messages, { temperature = 0.9, maxTokens = 512,
 }
 
 // --- llmPick: choose best model for a task ---
+// MODEL CONCURRENCY COSTS (Featherless):
+// Mistral-Nemo: 1 unit, Mistral-Large: 4 units, Qwen-72B: 4 units
+// With 4 unit limit, can only run 1 large OR 4 small at once
+// SAFE: use Nemo (1 unit) for everything, DeepSeek for gen
 function llmPick(purpose) {
   const m = CONFIG.featherless.models;
   switch (purpose) {
-    case 'fast':    return m.corpus[0];                     // Mistral-Nemo (fastest)
-    case 'reason':  return m.corpus[1];                     // Mistral-Large (best quality)
-    case 'random':  return m.corpus[Math.floor(Math.random() * m.corpus.length)];
-    case 'judge':   return Object.values(m.judges)[Math.floor(Math.random() * Object.values(m.judges).length)];
+    case 'fast':    return m.corpus[0];                     // Mistral-Nemo (1 unit)
+    case 'reason':  return m.corpus[0];                     // ALSO Nemo — Large costs 4 units, kills concurrency
+    case 'random':  return m.corpus[0];
+    case 'judge':   return m.corpus[0];
     default:        return m.corpus[0];
   }
 }
