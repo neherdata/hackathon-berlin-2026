@@ -46,7 +46,7 @@ async function buildProject(ghost) {
 
   const result = await llmCall(llmPick('reason'), [
     { role: 'system', content: `You are a senior frontend engineer. Generate a COMPLETE, working single-page web app as one HTML file. Include HTML, CSS, and JS inline. You CAN use CDN libraries (Leaflet, Chart.js, D3, Three.js, etc.) via script/link tags. Include real, interesting data — not placeholders. Make it visually impressive with a dark theme. Return ONLY the HTML code, no markdown fences, no explanation.` },
-    { role: 'user', content: `Build: ${ghost.name} — ${ghost.pitch}\nHint: ${buildHint}\n\nRequirements:\n- Single HTML file with CDN deps allowed\n- Real data (hardcoded is fine — make it interesting)\n- Dark theme, modern UI\n- Interactive — clicks, hovers, animations\n- Must work when opened directly in a browser` },
+    { role: 'user', content: `Build: ${ghost.name} — ${ghost.pitch}\nHint: ${buildHint}\n\nRequirements:\n- Single HTML file with CDN deps allowed (Leaflet, Chart.js, D3, etc.)\n- Berlin-themed — use Berlin locations, neighborhoods, landmarks, or startup scene data\n- Real, interesting data (hardcoded is fine — make it compelling)\n- Dark theme (#0a0a0f bg, green/purple accents), modern UI\n- Interactive — clicks, hovers, maps, charts, animations\n- Must work when opened directly in a browser` },
   ], { temperature: 0.7, maxTokens: 3072 });
 
   return result.content;
@@ -234,23 +234,22 @@ async function runShow() {
 
   await initMic();
 
-  // === PHASE 1: INTRO (TTS while generating) ===
+  // === PHASE 1: GENERATE (start immediately) + INTRO (TTS overlaps) ===
   setPhase('intro', 'BOO MC');
 
-  // Boo intro plays while ghosts generate (TTS is not an LLM call)
-  const introPromise = booSpeak("Welcome, mortals. A ghost will pitch a terrible idea. We roast it. Then we build something real. Live. Right now.");
+  // Kick off ghost generation FIRST (LLM calls start immediately)
+  const ghostsPromise = generateGhosts();
 
-  // Generate dud + buildable SEQUENTIALLY (respect concurrency)
-  await generateGhosts();
+  // Boo intro plays WHILE ghosts generate (TTS is not an LLM call)
+  await booSpeak("Welcome, mortals. A ghost has a pitch. Let the haunting begin.");
+
+  // Wait for ghosts if not done yet
+  await ghostsPromise;
   const dud = state.ghosts[0];
   const buildable = state.ghosts[1];
 
-  // Precompute judge verdicts for the buildable pitch (sequential LLM calls)
-  // These happen while intro TTS may still be playing
+  // Precompute judge verdicts (sequential, while dud pitches via TTS)
   const judgeVerdictsPromise = precomputeJudgeVerdicts(buildable);
-
-  // Wait for intro to finish
-  await introPromise;
 
   // === PHASE 2: DUD PITCH + ROAST ===
   setPhase('pitch', 'DUD PITCH');

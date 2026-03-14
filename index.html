@@ -755,16 +755,16 @@ async function listenToCrowd() {
 dom.btnStart.addEventListener('click', runShow);
 dom.btnSkip.addEventListener('click', () => speechSynthesis.cancel());
 setInterval(() => {
-  if (state.startTime) {
-    const elapsed = (Date.now() - state.startTime) / 1000;
-    dom.iElapsed.textContent = elapsed.toFixed(1) + 's';
-    const left = Math.max(0, 150 - elapsed);
-    const min = Math.floor(left / 60);
-    const sec = Math.floor(left % 60);
-    dom.iRemaining.textContent = `${min}:${sec.toString().padStart(2, '0')}`;
-    if (left < 30) dom.iRemaining.style.color = 'var(--danger)';
-  }
-}, 100);
+  if (!state.startTime) return;
+  const nowMs = Date.now();
+  const elapsedSec = (nowMs - state.startTime) / 1000;
+  const leftSec = Math.max(0, 150 - elapsedSec);
+  const m = Math.floor(leftSec / 60);
+  const s = Math.floor(leftSec % 60);
+  dom.iElapsed.textContent = `${Math.floor(elapsedSec)}s`;
+  dom.iRemaining.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+  dom.iRemaining.style.color = leftSec < 30 ? 'var(--danger)' : leftSec < 60 ? 'var(--warn)' : 'var(--accent)';
+}, 250);
 
 // Hide demo placeholder when iframe becomes visible
 const demoFrame = document.getElementById('demo-frame');
