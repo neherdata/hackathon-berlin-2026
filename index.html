@@ -382,7 +382,6 @@
   /* ===== RESPONSIVE: 1280x720 projector ===== */
   @media (max-width: 1280px) {
     #stage { grid-template-columns: 300px 1fr; }
-    #transcript { width: 320px; }
   }
   @media (max-height: 720px) {
     :root { --header-h: 38px; --log-h: 130px; }
@@ -444,6 +443,9 @@
     <!-- Superchat stats -->
     <div id="superchat-stats" class="hidden"></div>
 
+    <!-- Transcript log -->
+    <div id="transcript"></div>
+
     <!-- Controls -->
     <div id="controls">
       <button id="btn-start">Start the Show</button>
@@ -476,9 +478,6 @@
       </div>
       <div class="fb-url" id="feedback-url"></div>
     </div>
-
-      <!-- Transcript log — in sidebar -->
-    <div id="transcript"></div>
 
   </div>
 
