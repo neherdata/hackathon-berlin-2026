@@ -16,6 +16,18 @@ const GHOST_ARCHETYPES = [
   'a Berlin club bouncer who pivoted to tech and died debugging CSS at Berghain',
   'a food delivery rider who became sentient and now wants to disrupt logistics',
   'a retired professor from TU Berlin who died mid-lecture about neural networks',
+  'a ghost who built DeadIn — LinkedIn for ghosts — and died when no one endorsed their "synergistic possession" skill',
+  'a ghost who built GhostGPT — an AI that hallucinates on purpose as a feature — and died when it told them their startup was a good idea',
+  'a ghost who built Hauntr — Tinder for people who died in the same house — and died of an unresolved trauma they charged users for',
+  'a ghost who built SpookifyAI — Airbnb for haunted locations — and died asset-light because ghosts own nothing',
+  'a ghost who built CurseBase — Airtable for cursed artifact portfolio management — and died when their hex pipeline SLA missed',
+  'a ghost who built SaaSéance — a B2B séance platform with API tiers: Whisper, Wail, Full Possession — and died on a free trial',
+  'a ghost who built HexHub — GitHub for curses with open-source hex libraries — and died in a merge conflict',
+  'a ghost who built PhantomOps — DevOps for hauntings with scream velocity dashboards — and died in a recursive deployment loop',
+  'a ghost who built ScreamAI — ML that learns your deepest fears and optimises terror delivery — and died when it learned theirs',
+  'a ghost who built ChainGPT — an autonomous AI agent that haunts competitor infrastructure — and died when it turned on them',
+  'a ghost who built DeathFlow — Notion for the afterlife delegating dead peoples tasks to the living — and died with 47 open tasks',
+];
 ];
 
 // Ghost generation prompt — rich, personality-driven
