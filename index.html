@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ghost Pitch Engine</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --card: #12121a;
+    --accent: #00ff88;
+    --danger: #ff4444;
+    --warn: #ffaa00;
+    --ghost: #8b5cf6;
+    --text: #e0e0e0;
+    --dim: #666;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* --- Header / Instrumentation --- */
+  #header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px;
+    background: var(--card);
+    border-bottom: 1px solid #222;
+    font-size: 13px;
+  }
+  #header .logo { color: var(--ghost); font-weight: bold; font-size: 16px; }
+  #instrument {
+    display: flex;
+    gap: 24px;
+    color: var(--dim);
+  }
+  #instrument span { color: var(--accent); }
+
+  /* --- Main Stage --- */
+  #stage {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+  }
+
+  /* --- Phase Indicator --- */
+  #phase-indicator {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: var(--dim);
+    padding: 6px 16px;
+    border: 1px solid #333;
+    border-radius: 20px;
+  }
+  #phase-indicator.active { color: var(--accent); border-color: var(--accent); }
+  #phase-indicator.listening { color: var(--warn); border-color: var(--warn); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+  /* --- Ghost Card --- */
+  .ghost-card {
+    background: var(--card);
+    border: 1px solid #222;
+    border-radius: 12px;
+    padding: 32px;
+    width: 100%;
+    max-width: 700px;
+    position: relative;
+    overflow: hidden;
+  }
+  .ghost-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--ghost), var(--accent));
+  }
+  .ghost-card h2 {
+    color: var(--ghost);
+    font-size: 22px;
+    margin-bottom: 8px;
+  }
+  .ghost-card .ghost-type {
+    color: var(--dim);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 16px;
+  }
+  .ghost-card .pitch {
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  /* --- Crowd Meter --- */
+  #crowd-meter-container {
+    width: 100%;
+    max-width: 700px;
+    display: none;
+  }
+  #crowd-meter-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--dim);
+    margin-bottom: 8px;
+  }
+  #crowd-meter-bar {
+    width: 100%;
+    height: 40px;
+    background: #1a1a2e;
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+  }
+  #crowd-meter-fill {
+    height: 100%;
+    width: 0%;
+    transition: width 0.1s, background 0.3s;
+    background: var(--accent);
+    border-radius: 8px;
+  }
+  #crowd-meter-fill.boo { background: var(--danger); }
+  #crowd-meter-fill.cheer { background: var(--accent); }
+  #crowd-meter-fill.dead { background: var(--dim); }
+  #crowd-sentiment {
+    font-size: 14px;
+    text-align: center;
+    margin-top: 8px;
+    min-height: 20px;
+  }
+
+  /* --- Judge Panel --- */
+  .judge-panel {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+    max-width: 700px;
+  }
+  .judge-card {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid #222;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 13px;
+  }
+  .judge-card h3 {
+    color: var(--ghost);
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .judge-card .verdict { margin-top: 8px; font-style: italic; color: var(--dim); }
+
+  /* --- Log / Transcript --- */
+  #transcript {
+    width: 100%;
+    max-width: 700px;
+    background: var(--card);
+    border: 1px solid #222;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 12px;
+    max-height: 200px;
+    overflow-y: auto;
+    color: var(--dim);
+    line-height: 1.8;
+  }
+  #transcript .log-entry { }
+  #transcript .log-entry .ts { color: #444; margin-right: 8px; }
+  #transcript .log-entry .msg { color: var(--text); }
+  #transcript .log-entry .model { color: var(--ghost); }
+  #transcript .log-entry .tokens { color: var(--accent); }
+
+  /* --- Controls --- */
+  #controls {
+    display: flex;
+    gap: 16px;
+    margin-top: 16px;
+  }
+  button {
+    font-family: inherit;
+    font-size: 14px;
+    padding: 12px 32px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+  }
+  button:hover { transform: translateY(-1px); }
+  button:active { transform: translateY(0); }
+  #btn-start {
+    background: var(--ghost);
+    color: white;
+  }
+  #btn-overdrive {
+    background: var(--danger);
+    color: white;
+    display: none;
+  }
+  #btn-skip {
+    background: transparent;
+    border: 1px solid #333;
+    color: var(--dim);
+    display: none;
+  }
+
+  /* --- OVERDRIVE --- */
+  #overdrive-panel {
+    width: 100%;
+    max-width: 700px;
+    display: none;
+  }
+  #overdrive-panel h2 {
+    color: var(--danger);
+    font-size: 28px;
+    text-align: center;
+    margin-bottom: 16px;
+    animation: overdrive-flash 0.5s infinite;
+  }
+  @keyframes overdrive-flash {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+  #build-log {
+    background: #000;
+    border: 1px solid var(--danger);
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 13px;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    color: var(--accent);
+  }
+  #qr-container {
+    text-align: center;
+    margin-top: 24px;
+    display: none;
+  }
+
+  /* --- Utility --- */
+  .hidden { display: none !important; }
+  .fade-in { animation: fadeIn 0.5s ease-in; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div class="logo">GHOST PITCH ENGINE</div>
+  <div id="instrument">
+    Phase: <span id="i-phase">idle</span>
+    Model: <span id="i-model">—</span>
+    Tokens: <span id="i-tokens">0</span>
+    Elapsed: <span id="i-elapsed">0.0s</span>
+  </div>
+</div>
+
+<div id="stage">
+  <div id="phase-indicator">READY</div>
+
+  <!-- Ghost card (shows current ghost) -->
+  <div class="ghost-card hidden" id="ghost-card">
+    <h2 id="ghost-name"></h2>
+    <div class="ghost-type" id="ghost-type"></div>
+    <div class="pitch" id="ghost-pitch"></div>
+  </div>
+
+  <!-- Crowd meter -->
+  <div id="crowd-meter-container">
+    <div id="crowd-meter-label">
+      <span>BOO</span>
+      <span id="crowd-timer">5s</span>
+      <span>CHEER</span>
+    </div>
+    <div id="crowd-meter-bar">
+      <div id="crowd-meter-fill"></div>
+    </div>
+    <div id="crowd-sentiment"></div>
+  </div>
+
+  <!-- Judge panel -->
+  <div class="judge-panel hidden" id="judge-panel"></div>
+
+  <!-- OVERDRIVE -->
+  <div id="overdrive-panel">
+    <h2>OVERDRIVE</h2>
+    <div id="build-log"></div>
+    <div id="qr-container">
+      <p style="color: var(--accent); font-size: 18px; margin-bottom: 12px;" id="deploy-url"></p>
+    </div>
+  </div>
+
+  <!-- Transcript -->
+  <div id="transcript"></div>
+
+  <!-- Controls -->
+  <div id="controls">
+    <button id="btn-start">Start the Show</button>
+    <button id="btn-overdrive">OVERDRIVE</button>
+    <button id="btn-skip">Skip Ghost</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const CONFIG = {
+  featherless: {
+    baseUrl: 'https://api.featherless.ai/v1',
+    // Key loaded from env or hardcoded for hackathon
+    apiKey: 'rc_bc57634bdb07608f5d28175030f049b842e64c4fbf35bad9b9268d7f3e0d22ff',  // expires 2026-03-17
+    models: {
+      corpus: [
+        'deepseek-ai/DeepSeek-V3-0324',
+        'MiniMaxAI/MiniMax-M1-80k',
+        'moonshotai/Kimi-K2-Instruct',
+        'mistralai/Mistral-Nemo-Instruct-2407',
+      ],
+      judges: {
+        critic:   'deepseek-ai/DeepSeek-V3-0324',
+        optimist: 'moonshotai/Kimi-K2-Instruct',
+        builder:  'MiniMaxAI/MiniMax-M1-80k',
+        crowd:    'mistralai/Mistral-Nemo-Instruct-2407',
+      }
+    }
+  },
+  crowd: {
+    reactionWindowMs: 2000,
+    cheerBandHz: [2000, 8000],
+    booBandHz: [100, 500],
+    dudThreshold: 10,     // below this = dead
+    fftSize: 2048,
+  },
+  tts: {
+    rate: 1.0,
+    pitch: 1.0,
+  },
+  overdrive: {
+    // Jira project + build trigger
+    jiraProject: 'FAM',
+    deployDomain: 'westover.lol',
+  }
+};
+
+// ============================================================
+// STATE
+// ============================================================
+const state = {
+  phase: 'idle',        // idle, intro, pitch, crowd, judging, deliberation, overdrive
+  ghosts: [],           // generated ghost pitches
+  currentGhostIdx: -1,
+  crowdScores: [],      // { energy, sentiment, rawHigh, rawLow }
+  totalTokens: 0,
+  startTime: null,
+  audioCtx: null,
+  analyser: null,
+  micStream: null,
+};
+
+// ============================================================
+// DOM REFS
+// ============================================================
+const $ = (sel) => document.querySelector(sel);
+const dom = {
+  phase:       $('#phase-indicator'),
+  ghostCard:   $('#ghost-card'),
+  ghostName:   $('#ghost-name'),
+  ghostType:   $('#ghost-type'),
+  ghostPitch:  $('#ghost-pitch'),
+  crowdMeter:  $('#crowd-meter-container'),
+  crowdFill:   $('#crowd-meter-fill'),
+  crowdTimer:  $('#crowd-timer'),
+  crowdSentiment: $('#crowd-sentiment'),
+  judgePanel:  $('#judge-panel'),
+  overdrive:   $('#overdrive-panel'),
+  buildLog:    $('#build-log'),
+  deployUrl:   $('#deploy-url'),
+  qrContainer: $('#qr-container'),
+  transcript:  $('#transcript'),
+  iPhase:      $('#i-phase'),
+  iModel:      $('#i-model'),
+  iTokens:     $('#i-tokens'),
+  iElapsed:    $('#i-elapsed'),
+  btnStart:    $('#btn-start'),
+  btnOverdrive:$('#btn-overdrive'),
+  btnSkip:     $('#btn-skip'),
+};
+
+// ============================================================
+// LOGGING
+// ============================================================
+function log(msg, { model, tokens } = {}) {
+  const ts = ((Date.now() - (state.startTime || Date.now())) / 1000).toFixed(1);
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  let html = `<span class="ts">${ts}s</span>`;
+  if (model) html += `<span class="model">[${model}]</span> `;
+  html += `<span class="msg">${msg}</span>`;
+  if (tokens) html += ` <span class="tokens">(${tokens} tok)</span>`;
+  entry.innerHTML = html;
+  dom.transcript.appendChild(entry);
+  dom.transcript.scrollTop = dom.transcript.scrollHeight;
+}
+
+function setPhase(phase, label) {
+  state.phase = phase;
+  dom.iPhase.textContent = phase;
+  dom.phase.textContent = label || phase.toUpperCase();
+  dom.phase.className = '';
+  if (phase === 'crowd') dom.phase.classList.add('listening');
+  else if (phase !== 'idle') dom.phase.classList.add('active');
+}
+
+function updateInstrument({ model, tokens } = {}) {
+  if (model) dom.iModel.textContent = model.split('/').pop();
+  if (tokens) {
+    state.totalTokens += tokens;
+    dom.iTokens.textContent = state.totalTokens;
+  }
+  dom.iElapsed.textContent = ((Date.now() - state.startTime) / 1000).toFixed(1) + 's';
+}
+
+// ============================================================
+// FEATHERLESS API
+// ============================================================
+async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024 } = {}) {
+  const t0 = Date.now();
+  updateInstrument({ model });
+  log(`Calling ${model.split('/').pop()}...`, { model });
+
+  const res = await fetch(`${CONFIG.featherless.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${CONFIG.featherless.apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature,
+      max_tokens: maxTokens,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    log(`ERROR: ${res.status} — ${err}`, { model });
+    throw new Error(`Featherless ${res.status}: ${err}`);
+  }
+
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content || '';
+  const usage = data.usage?.total_tokens || 0;
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+
+  updateInstrument({ model, tokens: usage });
+  log(`Response in ${elapsed}s`, { model, tokens: usage });
+
+  return { content, usage, elapsed };
+}
+
+// ============================================================
+// TTS (Web Speech API)
+// ============================================================
+function getVoices() {
+  return new Promise(resolve => {
+    const voices = speechSynthesis.getVoices();
+    if (voices.length) return resolve(voices);
+    speechSynthesis.onvoiceschanged = () => resolve(speechSynthesis.getVoices());
+  });
+}
+
+async function speak(text, { voiceIndex = 0, rate = CONFIG.tts.rate, pitch = CONFIG.tts.pitch } = {}) {
+  return new Promise(async (resolve) => {
+    const voices = await getVoices();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.voice = voices[voiceIndex % voices.length];
+    utterance.rate = rate;
+    utterance.pitch = pitch;
+    utterance.onend = resolve;
+    utterance.onerror = resolve;
+    speechSynthesis.speak(utterance);
+  });
+}
+
+// ============================================================
+// CROWD DETECTION (Web Audio API)
+// ============================================================
+async function initMic() {
+  if (state.audioCtx) return;
+  state.audioCtx = new AudioContext();
+  state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const source = state.audioCtx.createMediaStreamSource(state.micStream);
+  state.analyser = state.audioCtx.createAnalyser();
+  state.analyser.fftSize = CONFIG.crowd.fftSize;
+  source.connect(state.analyser);
+}
+
+function getFrequencyEnergy(lowHz, highHz) {
+  const bufLen = state.analyser.frequencyBinCount;
+  const data = new Uint8Array(bufLen);
+  state.analyser.getByteFrequencyData(data);
+
+  const nyquist = state.audioCtx.sampleRate / 2;
+  const lowBin = Math.floor((lowHz / nyquist) * bufLen);
+  const highBin = Math.floor((highHz / nyquist) * bufLen);
+
+  let sum = 0;
+  let count = 0;
+  for (let i = lowBin; i <= highBin && i < bufLen; i++) {
+    sum += data[i];
+    count++;
+  }
+  return count > 0 ? sum / count : 0;
+}
+
+async function listenToCrowd() {
+  await initMic();
+  dom.crowdMeter.style.display = 'block';
+  dom.crowdFill.style.width = '0%';
+  dom.crowdFill.className = '';
+  dom.crowdSentiment.textContent = '';
+
+  setPhase('crowd', 'LISTENING');
+  log('Mic open — react now!');
+
+  return new Promise((resolve) => {
+    const duration = CONFIG.crowd.reactionWindowMs;
+    const interval = 100;
+    let elapsed = 0;
+    let peakHigh = 0;
+    let peakLow = 0;
+    let samples = [];
+
+    const timer = setInterval(() => {
+      elapsed += interval;
+      const remaining = Math.ceil((duration - elapsed) / 1000);
+      dom.crowdTimer.textContent = `${remaining}s`;
+
+      const highE = getFrequencyEnergy(...CONFIG.crowd.cheerBandHz);
+      const lowE = getFrequencyEnergy(...CONFIG.crowd.booBandHz);
+      const total = (highE + lowE) / 2;
+
+      peakHigh = Math.max(peakHigh, highE);
+      peakLow = Math.max(peakLow, lowE);
+      samples.push({ highE, lowE, total });
+
+      // Update meter
+      const pct = Math.min(100, (total / 128) * 100);
+      dom.crowdFill.style.width = `${pct}%`;
+
+      if (highE > lowE * 1.3) {
+        dom.crowdFill.className = 'cheer';
+      } else if (lowE > highE * 1.3) {
+        dom.crowdFill.className = 'boo';
+      } else {
+        dom.crowdFill.className = total > CONFIG.crowd.dudThreshold ? '' : 'dead';
+      }
+
+      if (elapsed >= duration) {
+        clearInterval(timer);
+
+        // Calculate final score
+        const avgHigh = samples.reduce((s, x) => s + x.highE, 0) / samples.length;
+        const avgLow = samples.reduce((s, x) => s + x.lowE, 0) / samples.length;
+        const avgTotal = samples.reduce((s, x) => s + x.total, 0) / samples.length;
+        const energy = Math.round((avgTotal / 128) * 100);
+
+        let sentiment;
+        if (energy < CONFIG.crowd.dudThreshold) {
+          sentiment = 'dead';
+          dom.crowdSentiment.textContent = '...crickets';
+          dom.crowdSentiment.style.color = 'var(--dim)';
+        } else if (avgHigh > avgLow * 1.3) {
+          sentiment = 'cheer';
+          dom.crowdSentiment.textContent = 'CHEERS!';
+          dom.crowdSentiment.style.color = 'var(--accent)';
+        } else if (avgLow > avgHigh * 1.3) {
+          sentiment = 'boo';
+          dom.crowdSentiment.textContent = 'BOOOO!';
+          dom.crowdSentiment.style.color = 'var(--danger)';
+        } else {
+          sentiment = 'mixed';
+          dom.crowdSentiment.textContent = 'Mixed reactions...';
+          dom.crowdSentiment.style.color = 'var(--warn)';
+        }
+
+        const score = { energy, sentiment, avgHigh, avgLow };
+        state.crowdScores.push(score);
+        log(`Crowd: ${sentiment} (energy: ${energy}%, high: ${avgHigh.toFixed(0)}, low: ${avgLow.toFixed(0)})`);
+        resolve(score);
+      }
+    }, interval);
+  });
+}
+
+// ============================================================
+// GHOST GENERATION
+// ============================================================
+async function generateGhosts() {
+  setPhase('generating', 'SUMMONING GHOSTS');
+  log('Summoning ghosts from the model swarm...');
+
+  const models = CONFIG.featherless.models.corpus;
+  const prompt = `You are a ghost haunting a tech hackathon in Berlin. Generate ONE creative startup idea as a ghost character.
+
+Return ONLY valid JSON (no markdown, no code fences):
+{"name": "Ghost Name (spooky/funny)", "type": "The Ghost of [something]", "pitch": "2-3 sentence startup pitch", "tagline": "One catchy line"}`;
+
+  const promises = models.map(model =>
+    llmCall(model, [
+      { role: 'system', content: 'You are a creative ghost at a hackathon. Return only valid JSON.' },
+      { role: 'user', content: prompt },
+    ], { temperature: 0.9, maxTokens: 256 })
+    .then(({ content }) => {
+      try {
+        // Try to extract JSON from response
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+      } catch { return null; }
+    })
+    .catch(() => null)
+  );
+
+  const results = await Promise.all(promises);
+  state.ghosts = results.filter(Boolean);
+
+  // Always add failsafe
+  state.ghosts.push({
+    name: 'Der Speisekarten-Geist',
+    type: 'The Ghost of Bad Translations',
+    pitch: 'Point your phone at any German restaurant menu and get instant cultural translations. Not just words — context, allergens, local tips, and pronunciation. Never order Handkäse by accident again.',
+    tagline: 'Lost in translation? This ghost eats menus for breakfast.',
+  });
+
+  log(`${state.ghosts.length} ghosts summoned`);
+  return state.ghosts;
+}
+
+// ============================================================
+// JUDGE DELIBERATION
+// ============================================================
+async function judgeGhost(ghost, crowdScore, round = 1) {
+  const judgeConfigs = [
+    { key: 'critic', name: 'The Critic', model: CONFIG.featherless.models.judges.critic, voiceIdx: 2, style: 'harsh but fair, finds flaws' },
+    { key: 'optimist', name: 'The Optimist', model: CONFIG.featherless.models.judges.optimist, voiceIdx: 4, style: 'enthusiastic, sees potential everywhere' },
+    { key: 'builder', name: 'The Builder', model: CONFIG.featherless.models.judges.builder, voiceIdx: 6, style: 'practical, asks "can we build this in 2 minutes?"' },
+  ];
+
+  dom.judgePanel.innerHTML = '';
+  dom.judgePanel.classList.remove('hidden');
+
+  const crowdContext = crowdScore
+    ? `The crowd reaction was: ${crowdScore.sentiment} (energy: ${crowdScore.energy}%). ${
+        crowdScore.sentiment === 'cheer' ? 'They loved it!' :
+        crowdScore.sentiment === 'boo' ? 'They hated it!' :
+        crowdScore.sentiment === 'dead' ? 'Complete silence. A dud.' :
+        'Mixed feelings.'
+      }`
+    : 'No crowd data yet.';
+
+  const roundContext = round === 2
+    ? 'This is your FINAL deliberation. You must reach a BUILD or NO BUILD verdict. Be decisive.'
+    : 'Give your initial take. Be concise — 2 sentences max.';
+
+  for (const judge of judgeConfigs) {
+    const card = document.createElement('div');
+    card.className = 'judge-card';
+    card.innerHTML = `<h3>${judge.name}</h3><div class="verdict">Thinking...</div>`;
+    dom.judgePanel.appendChild(card);
+
+    const { content } = await llmCall(judge.model, [
+      { role: 'system', content: `You are ${judge.name}, a ghost judge at a hackathon. You are ${judge.style}. Speak in first person as a ghost. ONE sentence only — punchy and decisive. ${roundContext}` },
+      { role: 'user', content: `Ghost pitch: "${ghost.name}" — ${ghost.pitch}\n\n${crowdContext}\n\nYour verdict (ONE sentence):` },
+    ], { temperature: 0.7, maxTokens: 60 });
+
+    card.querySelector('.verdict').textContent = content;
+    setPhase('judging', `JUDGE: ${judge.name.toUpperCase()}`);
+    await speak(content, { voiceIndex: judge.voiceIdx, rate: 1.2 });
+  }
+}
+
+// ============================================================
+// BUILD DECISION
+// ============================================================
+async function decideBuild(ghost, scores) {
+  const model = CONFIG.featherless.models.judges.critic;
+  const scoresSummary = scores.map((s, i) =>
+    `Round ${i + 1}: ${s.sentiment} (${s.energy}%)`
+  ).join(', ');
+
+  const { content } = await llmCall(model, [
+    { role: 'system', content: 'You are the head ghost judge. Based on crowd reactions and your fellow judges, announce BUILD or NO BUILD. Say it dramatically in one sentence. Start with "BUILD!" or "NO BUILD."' },
+    { role: 'user', content: `Ghost: "${ghost.name}" — ${ghost.pitch}\nCrowd scores: ${scoresSummary}\nYour final verdict:` },
+  ], { temperature: 0.5, maxTokens: 100 });
+
+  log(`VERDICT: ${content}`);
+  setPhase('verdict', content.startsWith('BUILD') ? 'BUILD!' : 'NO BUILD');
+  await speak(content, { voiceIndex: 0, rate: 0.9, pitch: 0.8 });
+
+  return content.toUpperCase().startsWith('BUILD');
+}
+
+// ============================================================
+// OVERDRIVE (Build + Deploy)
+// ============================================================
+async function overdrive(ghost) {
+  setPhase('overdrive', 'OVERDRIVE');
+  dom.overdrive.style.display = 'block';
+  dom.buildLog.textContent = '';
+
+  function buildLog(msg) {
+    const ts = ((Date.now() - state.startTime) / 1000).toFixed(1);
+    dom.buildLog.textContent += `[${ts}s] ${msg}\n`;
+    dom.buildLog.scrollTop = dom.buildLog.scrollHeight;
+    log(msg);
+  }
+
+  buildLog('OVERDRIVE ENGAGED');
+  buildLog(`Building: ${ghost.name}`);
+  buildLog(`Pitch: ${ghost.pitch}`);
+  buildLog('');
+  buildLog('Generating build spec...');
+
+  // Generate a detailed spec using Featherless
+  const { content: spec } = await llmCall(CONFIG.featherless.models.judges.critic, [
+    { role: 'system', content: 'You are a senior engineer. Write a brief technical spec for a single-page web app. Include: what it does, the HTML structure, key JS functions needed. Keep it under 200 words. This will be fed to an AI coding agent.' },
+    { role: 'user', content: `Build this app: ${ghost.name} — ${ghost.pitch}. It must be a single HTML file with embedded CSS and JS, mobile-friendly, deployable to Cloudflare Pages.` },
+  ], { maxTokens: 512 });
+
+  buildLog('Spec generated');
+  buildLog(spec.substring(0, 200) + '...');
+  buildLog('');
+  buildLog('Triggering build agent via Jira...');
+
+  // TODO: Trigger actual build via Jira API / familiar MCP
+  // For now, show the spec and provide manual trigger
+  buildLog('');
+  buildLog('=== BUILD SPEC READY ===');
+  buildLog('Waiting for agent to build and deploy...');
+  buildLog(`Target: https://${ghost.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${CONFIG.overdrive.deployDomain}`);
+
+  await speak(`Overdrive engaged. Building ${ghost.name}. Stand by.`, { rate: 0.9, pitch: 0.7 });
+}
+
+// ============================================================
+// SHOW RUNNER (Main flow)
+// ============================================================
+async function runShow() {
+  state.startTime = Date.now();
+  dom.btnStart.style.display = 'none';
+  dom.btnSkip.style.display = 'inline-block';
+
+  // Request mic permission early
+  await initMic();
+
+  // Phase 0: MC Ghost intro — fast, no calibration
+  setPhase('intro', 'MC GHOST');
+  log('MC Ghost taking the stage...');
+  await speak(
+    "Welcome, mortals. Startup ghosts are about to pitch you. " +
+    "Cheer if you love it. Boo if you hate it. Silence kills. " +
+    "If a ghost survives... we build it live. Let the haunting begin.",
+    { voiceIndex: 0, rate: 1.1, pitch: 0.7 }
+  );
+
+  // Generate ghosts
+  await generateGhosts();
+
+  // Run through ghosts
+  for (let i = 0; i < state.ghosts.length; i++) {
+    state.currentGhostIdx = i;
+    const ghost = state.ghosts[i];
+
+    // Phase 1: Pitch
+    setPhase('pitch', 'GHOST PITCH');
+    dom.ghostCard.classList.remove('hidden');
+    dom.ghostName.textContent = ghost.name;
+    dom.ghostType.textContent = ghost.type;
+    dom.ghostPitch.textContent = ghost.pitch;
+    log(`Ghost ${i + 1}/${state.ghosts.length}: ${ghost.name}`);
+
+    await speak(`I am ${ghost.name}. ${ghost.pitch}`, { voiceIndex: (i * 2 + 1) % 8, rate: 1.15 });
+
+    // Phase 2: Crowd reaction #1
+    const crowd1 = await listenToCrowd();
+
+    if (crowd1.energy < CONFIG.crowd.dudThreshold) {
+      log(`DUD — ghost banished (energy: ${crowd1.energy}%)`);
+      await speak("Banished.", { voiceIndex: 0, rate: 1.2, pitch: 0.5 });
+      dom.ghostCard.classList.add('hidden');
+      dom.crowdMeter.style.display = 'none';
+      continue;
+    }
+
+    // Phase 3: Judging Round 1
+    setPhase('judging', 'JUDGING ROUND 1');
+    await judgeGhost(ghost, crowd1, 1);
+
+    // Phase 4: Crowd reaction #2
+    await speak("Your turn.", { voiceIndex: 0, rate: 1.2, pitch: 0.7 });
+    const crowd2 = await listenToCrowd();
+
+    // Phase 5: Final deliberation
+    setPhase('deliberation', 'FINAL DELIBERATION');
+    await judgeGhost(ghost, crowd2, 2);
+
+    // BUILD or NO BUILD
+    const shouldBuild = await decideBuild(ghost, [crowd1, crowd2]);
+
+    if (shouldBuild) {
+      await overdrive(ghost);
+      break;
+    } else {
+      await speak("Next ghost.", { voiceIndex: 0, rate: 1.2, pitch: 0.7 });
+      dom.ghostCard.classList.add('hidden');
+      dom.judgePanel.classList.add('hidden');
+      dom.crowdMeter.style.display = 'none';
+    }
+  }
+}
+
+// ============================================================
+// EVENT LISTENERS
+// ============================================================
+dom.btnStart.addEventListener('click', runShow);
+dom.btnOverdrive.addEventListener('click', () => {
+  // Manual override — force build current ghost
+  if (state.currentGhostIdx >= 0) {
+    overdrive(state.ghosts[state.currentGhostIdx]);
+  }
+});
+dom.btnSkip.addEventListener('click', () => {
+  // Skip current speech
+  speechSynthesis.cancel();
+});
+
+// Update elapsed timer
+setInterval(() => {
+  if (state.startTime) {
+    dom.iElapsed.textContent = ((Date.now() - state.startTime) / 1000).toFixed(1) + 's';
+  }
+}, 100);
+</script>
+
+</body>
+</html>
