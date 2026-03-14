@@ -296,7 +296,6 @@
     padding: 10px;
     text-align: center;
     z-index: 10;
-    display: none;
   }
   #qr-container img {
     display: block;
@@ -442,7 +441,7 @@
     <div class="judge-panel hidden" id="judge-panel"></div>
 
     <!-- UserMap sponsor widget -->
-    <div id="usermap-widget" class="hidden" style="background:var(--card);border:1px solid #252530;border-radius:8px;padding:10px 12px;flex-shrink:0;overflow:hidden">
+    <div id="usermap-widget" style="background:var(--card);border:1px solid #252530;border-radius:8px;padding:10px 12px;flex-shrink:0;overflow:hidden">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <div id="usermap-dot" style="width:8px;height:8px;border-radius:50%;background:#444;transition:background 0.3s"></div>
         <span style="color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:bold">UserMap</span>
@@ -452,7 +451,7 @@
     </div>
 
     <!-- Superchat stats -->
-    <div id="superchat-stats" class="hidden"></div>
+    <div id="superchat-stats"><h3>LIVE SUPERCHAT</h3><div style="color:var(--dim);font-size:11px">Waiting for feedback...</div></div>
 
     <!-- Transcript log -->
     <div id="transcript"></div>

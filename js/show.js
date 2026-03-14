@@ -292,8 +292,22 @@ async function runShow() {
   } catch (e) { log(`Roast LLM failed: ${e.message}, using fallback`); }
   await shortSpeak(roast, 4, { voiceIndex: roastJudge.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[roastJudge.key] });
 
-  // === WAIT FOR BUILD ===
+  // === REAL PITCH (fills time while build runs) ===
+  setPhase('pitch2', 'THE REAL PITCH');
+  dom.ghostCard.classList.remove('hidden');
+  dom.ghostName.textContent = buildable.name;
+  dom.ghostType.textContent = buildable.type;
+  dom.ghostPitch.textContent = buildable.pitch;
+  await booSpeak(`But wait. A worthy ghost appears. ${buildable.name}. ${buildable.pitch}`);
+
+  // === JUDGE VERDICT (while build still runs) ===
+  setPhase('judging', 'JUDGE VERDICT');
+  const judgeVerdicts = await judgeVerdictsPromise;
+  const judgeFeedback = await showJudgeFeedback(judgeVerdicts);
+
+  // === WAIT FOR BUILD (should be done or nearly done by now) ===
   setPhase('building', 'BUILDING LIVE');
+  log('Waiting for build to finish...');
   let builtCode = await buildPromise;
 
   // === REVEAL DEMO ===
@@ -303,14 +317,12 @@ async function runShow() {
   // Let audience see demo + submit feedback
   await new Promise(r => setTimeout(r, 5000));
 
-  // === JUDGES + INCORPORATE ===
-  setPhase('judging', 'JUDGES + FEEDBACK');
+  // === COLLECT FEEDBACK ===
+  setPhase('feedback', 'COLLECTING FEEDBACK');
   stopSuperchatPoll();
-  const judgeVerdicts = await judgeVerdictsPromise;
   const superchatMessages = await fetchSuperchat(feedbackSince);
   showSuperchatStats(superchatMessages);
   const superchatText = formatSuperchat(superchatMessages);
-  const judgeFeedback = await showJudgeFeedback(judgeVerdicts);
 
   setPhase('rebuilding', 'INCORPORATING');
   for (const v of judgeVerdicts) pushToUserMap(v, 'judge');
