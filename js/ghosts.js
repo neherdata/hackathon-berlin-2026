@@ -3,13 +3,36 @@
 // Depends on: CONFIG, state, log(), setPhase(), llmFanOut()
 // ============================================================
 
-// Ghost generation prompt — edit this to shape ghost personalities
-const GHOST_PROMPT = {
-  system: 'You are a creative ghost at a hackathon. Return only valid JSON.',
-  user: `You are a ghost haunting a tech hackathon in Berlin. Generate ONE creative startup idea as a ghost character.
+// Ghost archetypes — each model gets a different personality seed
+const GHOST_ARCHETYPES = [
+  'a burned-out Berlin startup founder who died pitching to VCs at 3am',
+  'a rogue AI researcher who was deleted by their own experiment',
+  'a fintech bro who died when his blockchain wallet ate his soul',
+  'a hardcore hardware engineer who died soldering at Berlin CCC',
+  'a failed influencer who died of zero engagement',
+  'a data privacy lawyer who was GDPR-d out of existence',
+  'an overly ambitious PM who died under a mountain of Jira tickets',
+  'a DevOps ghost who died in a recursive deployment loop',
+  'a Berlin club bouncer who pivoted to tech and died debugging CSS at Berghain',
+  'a food delivery rider who became sentient and now wants to disrupt logistics',
+  'a retired professor from TU Berlin who died mid-lecture about neural networks',
+];
 
-Return ONLY valid JSON (no markdown, no code fences):
-{"name": "Ghost Name (spooky/funny)", "type": "The Ghost of [something]", "pitch": "2-3 sentence startup pitch", "tagline": "One catchy line"}`,
+// Ghost generation prompt — rich, personality-driven
+const GHOST_PROMPT = {
+  system: `You are a dead startup founder haunting a tech hackathon in Berlin, March 2026. You died in a ridiculous tech-related way and now you channel your unfinished business into ONE startup idea.
+
+Rules:
+- Your pitch must be a REAL, buildable idea (not a joke product)
+- Your ghost personality should shine through the pitch
+- Berlin/Europe context is a plus but not required
+- Be creative, funny, and a little unhinged
+- Return ONLY valid JSON, no markdown, no code fences`,
+
+  user: (archetype) => `You are ${archetype}.
+
+Generate your ghost character and startup pitch as JSON:
+{"name": "Your Ghost Name (creative, spooky-funny)", "type": "The Ghost of [something relevant to how you died]", "pitch": "Your 2-3 sentence startup pitch. Make it compelling — the audience will cheer or boo you, and ghost judges will decide if it gets BUILT LIVE on stage.", "tagline": "One killer tagline that haunts the audience"}`,
 };
 
 // Failsafe ghost — always added last
@@ -25,14 +48,28 @@ async function generateGhosts() {
   log('Summoning ghosts from the model swarm...');
 
   const models = CONFIG.featherless.models.corpus;
-  const messages = [
-    { role: 'system', content: GHOST_PROMPT.system },
-    { role: 'user', content: GHOST_PROMPT.user },
-  ];
 
-  // Fan out to all models, parse JSON responses
-  const results = await llmFanOut(models, messages, { temperature: 0.9, maxTokens: 256, parseJSON: true });
-  state.ghosts = results.map(r => r.parsed);
+  // Each model gets a different archetype for variety
+  const calls = models.map((model, i) => {
+    const archetype = GHOST_ARCHETYPES[i % GHOST_ARCHETYPES.length];
+    const messages = [
+      { role: 'system', content: GHOST_PROMPT.system },
+      { role: 'user', content: GHOST_PROMPT.user(archetype) },
+    ];
+    return { model, messages };
+  });
+
+  // Fan out — each model gets its own unique prompt
+  log(`Fan-out across ${calls.length} models...`);
+  const promises = calls.map(({ model, messages }) =>
+    llmJSON(model, messages, { temperature: 0.95, maxTokens: 300 })
+      .catch(e => { log(`${model.split('/').pop()} failed: ${e.message}`); return null; })
+  );
+  const results = await Promise.all(promises);
+  const successes = results.filter(r => r && r.parsed);
+  log(`Fan-out: ${successes.length}/${calls.length} succeeded`);
+
+  state.ghosts = successes.map(r => r.parsed);
 
   // Always add failsafe last
   state.ghosts.push(FAILSAFE_GHOST);
