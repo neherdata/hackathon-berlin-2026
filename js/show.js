@@ -292,7 +292,7 @@ async function runShow() {
   } catch (e) { log(`Roast LLM failed: ${e.message}, using fallback`); }
   await shortSpeak(roast, 4, { voiceIndex: roastJudge.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[roastJudge.key] });
 
-  // === REAL PITCH (fills time while build runs) ===
+  // === REAL PITCH — Boo presents while build runs ===
   setPhase('pitch2', 'THE REAL PITCH');
   dom.ghostCard.classList.remove('hidden');
   dom.ghostName.textContent = buildable.name;
@@ -300,32 +300,34 @@ async function runShow() {
   dom.ghostPitch.textContent = buildable.pitch;
   await booSpeak(`But wait. A worthy ghost appears. ${buildable.name}. ${buildable.pitch}`);
 
-  // === JUDGE VERDICT (while build still runs) ===
+  // === JUDGE VERDICT — plays while build still runs ===
   setPhase('judging', 'JUDGE VERDICT');
-  const judgeVerdicts = await judgeVerdictsPromise;
-  const judgeFeedback = await showJudgeFeedback(judgeVerdicts);
+  let judgeVerdicts, judgeFeedback;
+  try {
+    judgeVerdicts = await judgeVerdictsPromise;
+    judgeFeedback = await showJudgeFeedback(judgeVerdicts);
+  } catch (e) {
+    log(`Judge failed: ${e.message}`);
+    judgeVerdicts = ['The spirits are silent.'];
+    judgeFeedback = 'No judge feedback.';
+  }
 
-  // === WAIT FOR BUILD (should be done or nearly done by now) ===
+  // === REVEAL BUILD — show whatever we have ===
   setPhase('building', 'BUILDING LIVE');
-  log('Waiting for build to finish...');
+  log('Waiting for build...');
   let builtCode = await buildPromise;
-
-  // === REVEAL DEMO ===
   setPhase('reveal', 'LIVE DEMO');
   showDemo(builtCode);
 
-  // Let audience see demo + submit feedback
-  await new Promise(r => setTimeout(r, 5000));
-
-  // === COLLECT FEEDBACK ===
-  setPhase('feedback', 'COLLECTING FEEDBACK');
+  // === COLLECT FEEDBACK — don't block, grab what's there ===
   stopSuperchatPoll();
   const superchatMessages = await fetchSuperchat(feedbackSince);
   showSuperchatStats(superchatMessages);
   const superchatText = formatSuperchat(superchatMessages);
-
-  setPhase('rebuilding', 'INCORPORATING');
   for (const v of judgeVerdicts) pushToUserMap(v, 'judge');
+
+  // === REBUILD with feedback — the payoff ===
+  setPhase('rebuilding', 'INCORPORATING FEEDBACK');
   const { code: updatedCode, incorporated } = await rebuildWithFeedback(buildable, builtCode, judgeFeedback, superchatText);
   log(`REBUILD: ${incorporated.length} incorporated`);
   showDemo(updatedCode);
