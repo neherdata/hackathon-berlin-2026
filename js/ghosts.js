@@ -53,7 +53,7 @@ const FAILSAFE_GHOST = {
 async function generateDud() {
   log('GEN: dud pitch...');
   const archetype = GHOST_ARCHETYPES[Math.floor(Math.random() * GHOST_ARCHETYPES.length)];
-  const result = await llmJSON(llmPick('fast'), [
+  const result = await llmJSON('deepseek-ai/DeepSeek-V3-0324', [
     { role: 'system', content: `<role>Dead startup founder, Berlin hackathon</role>
 <task>TERRIBLE, funny, useless startup idea</task>
 <rules>JSON only, no markdown, 1 sentence pitch</rules>
@@ -72,7 +72,7 @@ async function generateBuildable() {
   const archetype = GHOST_ARCHETYPES[Math.floor(Math.random() * GHOST_ARCHETYPES.length)];
   const template = BUILD_TEMPLATES[Math.floor(Math.random() * BUILD_TEMPLATES.length)];
 
-  const result = await llmJSON(llmPick('fast'), [
+  const result = await llmJSON('deepseek-ai/DeepSeek-V3-0324', [
     { role: 'system', content: `<role>Dead startup founder haunting a Berlin hackathon</role>
 <task>Generate a GENUINELY GOOD web app idea that fits this exact build template</task>
 <build_template>${template}</build_template>
