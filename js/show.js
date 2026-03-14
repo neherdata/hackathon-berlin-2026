@@ -160,20 +160,17 @@ async function showJudgeFeedback(precomputedVerdicts) {
 }
 
 async function precomputeJudgeVerdicts(ghost) {
-  log('Precomputing judge feedback...');
-  const models = Object.values(CONFIG.featherless.models.judges);
+  log('Precomputing judge feedback (1 judge)...');
+  const judge = CONFIG.judges[0];
+  const model = Object.values(CONFIG.featherless.models.judges)[0];
   const verdicts = [];
-  for (let i = 0; i < CONFIG.judges.length; i++) {
-    const judge = CONFIG.judges[i];
-    const model = models[i % models.length];
-    try {
-      const { content } = await llmCall(model, [
-        { role: 'system', content: `You are ${judge.name}. ${judge.backstory} ONE sentence. Max 12 words.` },
-        { role: 'user', content: `Ghost: "${ghost.name}" — ${ghost.pitch}` },
-      ], { temperature: 0.8, maxTokens: 25, quiet: true });
-      verdicts.push(content);
-    } catch { verdicts.push('The spirits are silent.'); }
-  }
+  try {
+    const { content } = await llmCall(model, [
+      { role: 'system', content: `You are ${judge.name}. ${judge.backstory} ONE sentence. Max 12 words.` },
+      { role: 'user', content: `Ghost: "${ghost.name}" — ${ghost.pitch}` },
+    ], { temperature: 0.8, maxTokens: 25, quiet: true });
+    verdicts.push(content);
+  } catch { verdicts.push('The spirits are silent.'); }
   return verdicts;
 }
 

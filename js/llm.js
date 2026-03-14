@@ -3,12 +3,31 @@
 // Shared by all modules. Depends on: CONFIG, state, log(), updateInstrument()
 // ============================================================
 
-// --- llmCall: single model, single response ---
+// --- GLOBAL CONCURRENCY QUEUE (Featherless limit: 4, we use max 3) ---
+const LLM_QUEUE = { active: 0, max: 3, waiting: [] };
+function llmAcquire() {
+  if (LLM_QUEUE.active < LLM_QUEUE.max) {
+    LLM_QUEUE.active++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => LLM_QUEUE.waiting.push(resolve));
+}
+function llmRelease() {
+  LLM_QUEUE.active--;
+  if (LLM_QUEUE.waiting.length > 0) {
+    LLM_QUEUE.active++;
+    LLM_QUEUE.waiting.shift()();
+  }
+}
+
+// --- llmCall: single model, single response (queued) ---
 async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024, quiet = false } = {}) {
+  await llmAcquire();
   const t0 = Date.now();
   updateInstrument({ model });
-  if (!quiet) log(`Calling ${model.split('/').pop()}...`, { model });
+  if (!quiet) log(`[${LLM_QUEUE.active}/${LLM_QUEUE.max}] ${model.split('/').pop()}...`, { model });
 
+  try {
   const res = await fetch(`${CONFIG.featherless.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -33,6 +52,7 @@ async function llmCall(model, messages, { temperature = 0.8, maxTokens = 1024, q
   if (!quiet) log(`Response in ${elapsed}s`, { model, tokens: usage });
 
   return { content, usage, elapsed, model };
+  } finally { llmRelease(); }
 }
 
 // --- llmJSON: call + extract + parse JSON, with retry ---
