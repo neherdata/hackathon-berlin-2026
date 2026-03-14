@@ -28,10 +28,13 @@ export async function onRequest(context) {
     }
   }
 
-  // GET — return all feedback + stats
+  // GET — return feedback, optionally filtered by ?since=timestamp
+  const url = new URL(request.url);
+  const since = parseInt(url.searchParams.get('since') || '0', 10);
+  const filtered = since ? feedback.filter(f => f.ts > since) : feedback;
   const stats = {
     total: feedback.length,
-    recent: feedback.slice(-50),
+    recent: filtered.slice(-50),
   };
   return Response.json(stats, { headers: cors });
 }
