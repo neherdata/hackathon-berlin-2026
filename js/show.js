@@ -1,6 +1,6 @@
 // ============================================================
 // SHOW RUNNER — James's zone
-// Judging, crowd detection, Boo MC, chaos judges, OVERDRIVE
+// NEW FLOW: 1 ghost → dud pitch → crowd + judge feedback → pivot → OVERDRIVE
 // Depends on: CONFIG, state, dom, log(), setPhase(), speak(),
 //             llmCall(), llmJSON(), llmStream(), llmPick(),
 //             generateGhosts(), initMic(), listenToCrowd()
@@ -19,46 +19,8 @@ async function booSpeak(text) {
   await speak(text, { voiceIndex: BOO.voiceIdx, rate: BOO.rate, pitch: BOO.pitch, elVoice: CONFIG.elevenlabs.voices.boo });
 }
 
-async function booJudge(ghost, crowdScore) {
-  const crowdText = crowdScore.sentiment === 'cheer' ? 'The living ROARED with approval!'
-    : crowdScore.sentiment === 'boo' ? 'The living have REJECTED this ghost!'
-    : crowdScore.sentiment === 'dead' ? 'Nothing. Not a sound. The living don\'t care.'
-    : 'The living are... confused.';
-
-  const { content } = await llmCall(llmPick('fast'), [
-    { role: 'system', content: `${BOO.backstory} Speak as Boo. ONE dramatic sentence about the crowd's reaction. Channel the energy.` },
-    { role: 'user', content: `The crowd just reacted to "${ghost.name}": ${crowdText} Energy: ${crowdScore.energy}%. Translate this for the judges.` },
-  ], { temperature: 0.9, maxTokens: 50 });
-
-  return content;
-}
-
-// --- CHAOS JUDGES ---
-async function summonChaosJudges(ghost) {
-  log('Boo is summoning chaos judges...');
-  setPhase('chaos', 'SUMMONING CHAOS');
-
-  const result = await llmJSON(llmPick('reason'), [
-    { role: 'system', content: 'Generate 2 absurd ghost judge characters in JSON array. Each has a name, a ridiculous backstory (1 sentence — how they died), and what they judge (1 sentence). Be unhinged and funny. Return ONLY a JSON array, no markdown.' },
-    { role: 'user', content: `These judges are evaluating: "${ghost.name}" — ${ghost.pitch}. Make them relevant but absurd.` },
-  ], { temperature: 1.0, maxTokens: 256 });
-
-  if (result.parsed && Array.isArray(result.parsed)) {
-    return result.parsed.slice(0, 2).map((j, i) => ({
-      name: j.name || `Chaos Ghost ${i + 1}`,
-      backstory: j.backstory || 'Died of pure chaos.',
-      judges: j.judges || j.what_they_judge || 'vibes',
-      voiceIdx: 8 + i,
-    }));
-  }
-  return [
-    { name: 'Gary the Unpredictable', backstory: 'Died by tripping over a USB cable.', judges: 'whether the name sounds cool', voiceIdx: 8 },
-    { name: 'The Void', backstory: 'Was never born. Just appeared.', judges: 'cosmic relevance', voiceIdx: 9 },
-  ];
-}
-
-// --- JUDGE DELIBERATION ---
-async function judgeGhost(ghost, crowdScore, round = 1) {
+// --- JUDGE FEEDBACK (not verdict — constructive roast) ---
+async function getJudgeFeedback(ghost, crowdScore) {
   const models = Object.values(CONFIG.featherless.models.judges);
   const coreJudges = CONFIG.judges.map((j, i) => ({
     ...j,
@@ -69,78 +31,76 @@ async function judgeGhost(ghost, crowdScore, round = 1) {
   dom.judgePanel.innerHTML = '';
   dom.judgePanel.classList.remove('hidden');
 
-  // Boo announces crowd reaction first
-  const booVerdict = await booJudge(ghost, crowdScore);
+  // Boo translates crowd reaction
+  const crowdText = crowdScore.sentiment === 'cheer' ? 'The living actually liked this dud?!'
+    : crowdScore.sentiment === 'boo' ? 'The living have spoken — this idea STINKS.'
+    : crowdScore.sentiment === 'dead' ? 'Nothing. Dead silence. Even worse.'
+    : 'The crowd is confused. Fix this.';
+
+  const booReaction = await llmCall(llmPick('fast'), [
+    { role: 'system', content: `${BOO.backstory} The ghost just pitched a terrible idea. The crowd reacted. Summarize the crowd's feeling in ONE sentence and tell the ghost to listen to the judges for how to fix it.` },
+    { role: 'user', content: `Ghost "${ghost.name}" pitched: "${ghost.pitch}". Crowd: ${crowdText} Energy: ${crowdScore.energy}%.` },
+  ], { temperature: 0.9, maxTokens: 50 });
+
   const booCard = document.createElement('div');
   booCard.className = 'judge-card';
   booCard.style.borderColor = 'var(--warn)';
-  booCard.innerHTML = `<h3 style="color: var(--warn)">Boo (The Crowd)</h3><div class="verdict">${booVerdict}</div>`;
+  booCard.innerHTML = `<h3 style="color: var(--warn)">Boo (The Crowd)</h3><div class="verdict">${booReaction.content}</div>`;
   dom.judgePanel.appendChild(booCard);
-  setPhase('judging', 'BOO SPEAKS');
-  await booSpeak(booVerdict);
+  setPhase('feedback', 'BOO SPEAKS');
+  await booSpeak(booReaction.content);
 
-  const crowdContext = `Boo, the audience ghost, says: "${booVerdict}" (crowd energy: ${crowdScore.energy}%, sentiment: ${crowdScore.sentiment})`;
+  const crowdContext = `Boo says: "${booReaction.content}" (crowd energy: ${crowdScore.energy}%, sentiment: ${crowdScore.sentiment})`;
 
-  const roundContext = round === 2
-    ? 'This is your FINAL deliberation. You must reach a BUILD or NO BUILD verdict. Be decisive.'
-    : 'Give your initial take. ONE sentence only — punchy and decisive.';
-
-  // Core judges
-  for (const judge of coreJudges) {
+  // Fire all judge LLM calls in parallel, display + speak round-robin (pick 1-2 to read aloud)
+  const feedbackPromises = coreJudges.map(async (judge) => {
     const card = document.createElement('div');
     card.className = 'judge-card';
     card.innerHTML = `<h3>${judge.name}</h3><div class="verdict">Thinking...</div>`;
     dom.judgePanel.appendChild(card);
 
     const { content } = await llmCall(judge.model, [
-      { role: 'system', content: `You are ${judge.name}, a ghost judge at a hackathon. ${judge.style} Speak in first person as a ghost. ONE sentence only — punchy and decisive. ${roundContext}` },
-      { role: 'user', content: `Ghost pitch: "${ghost.name}" — ${ghost.pitch}\n\n${crowdContext}\n\nYour verdict (ONE sentence):` },
-    ], { temperature: 0.7, maxTokens: 60 });
+      { role: 'system', content: `You are ${judge.name}, a ghost judge at a hackathon. ${judge.style} The ghost pitched a DUD idea. Give ONE specific, actionable piece of feedback to make it better. Be constructive but roast-y. ONE sentence.` },
+      { role: 'user', content: `Ghost: "${ghost.name}" pitched: "${ghost.pitch}"\n\n${crowdContext}\n\nYour ONE feedback to improve this idea:` },
+    ], { temperature: 0.8, maxTokens: 60 });
 
     card.querySelector('.verdict').textContent = content;
-    setPhase('judging', `JUDGE: ${judge.name.toUpperCase()}`);
+    return { judge, content };
+  });
+
+  const feedbacks = await Promise.all(feedbackPromises);
+
+  // Only speak 1-2 judges to save time — round robin
+  const speakCount = Math.min(2, feedbacks.length);
+  for (let i = 0; i < speakCount; i++) {
+    const { judge, content } = feedbacks[i];
+    setPhase('feedback', `JUDGE: ${judge.name.toUpperCase()}`);
     await speak(content, { voiceIndex: judge.voiceIdx, rate: 1.2, elVoice: CONFIG.elevenlabs.voices[judge.key] });
   }
 
-  // Round 2: summon chaos judges
-  if (round === 2) {
-    const chaosJudges = await summonChaosJudges(ghost);
-    for (const chaos of chaosJudges) {
-      const card = document.createElement('div');
-      card.className = 'judge-card';
-      card.style.borderColor = 'var(--danger)';
-      card.innerHTML = `<h3 style="color: var(--danger)">${chaos.name}</h3><div class="ghost-type">${chaos.backstory}</div><div class="verdict">Channeling...</div>`;
-      dom.judgePanel.appendChild(card);
-
-      const { content } = await llmCall(llmPick('random'), [
-        { role: 'system', content: `You are ${chaos.name}, a chaos ghost judge. ${chaos.backstory} You judge: ${chaos.judges}. ONE sentence verdict — be chaotic and funny.` },
-        { role: 'user', content: `Ghost pitch: "${ghost.name}" — ${ghost.pitch}\n${crowdContext}\nYour chaotic verdict:` },
-      ], { temperature: 1.0, maxTokens: 50 });
-
-      card.querySelector('.verdict').textContent = content;
-      setPhase('judging', `CHAOS: ${chaos.name.toUpperCase()}`);
-      const chaosVoiceKey = chaosJudges.indexOf(chaos) === 0 ? 'chaos1' : 'chaos2';
-      await speak(content, { voiceIndex: chaos.voiceIdx, rate: 1.3, elVoice: CONFIG.elevenlabs.voices[chaosVoiceKey] });
-    }
-  }
+  return feedbacks.map(f => `${f.judge.name}: "${f.content}"`).join('\n');
 }
 
-// --- BUILD DECISION ---
-async function decideBuild(ghost, scores) {
-  const scoresSummary = scores.map((s, i) =>
-    `Round ${i + 1}: ${s.sentiment} (${s.energy}%)`
-  ).join(', ');
+// --- GHOST PIVOT: incorporate feedback into improved idea ---
+async function pivotGhost(ghost, feedbackSummary, crowdScore) {
+  setPhase('pivot', 'GHOST IS PIVOTING');
+  log('Ghost incorporating feedback...');
 
   const { content } = await llmCall(llmPick('reason'), [
-    { role: 'system', content: `You are Boo, the Ghost Host. ${BOO.backstory} Based on crowd reactions and judge verdicts, announce the FINAL verdict. Start with "BUILD!" or "NO BUILD!" Be dramatic. One sentence.` },
-    { role: 'user', content: `Ghost: "${ghost.name}" — ${ghost.pitch}\nCrowd scores: ${scoresSummary}\nThe judges have deliberated. Your final announcement:` },
-  ], { temperature: 0.6, maxTokens: 80 });
+    { role: 'system', content: `You are ${ghost.name}, ${ghost.type}. You just pitched a bad startup idea and got roasted by judges and the crowd. Now PIVOT. Take their feedback and transform your idea into something ACTUALLY good. Keep your ghost personality but make the idea genuinely compelling. Respond in character, 2-3 sentences: acknowledge the feedback, then pitch the IMPROVED version.` },
+    { role: 'user', content: `Your original pitch: "${ghost.pitch}"\n\nJudge feedback:\n${feedbackSummary}\n\nCrowd sentiment: ${crowdScore.sentiment} (${crowdScore.energy}% energy)\n\nPivot your idea — make it work:` },
+  ], { temperature: 0.8, maxTokens: 150 });
 
-  log(`BOO VERDICT: ${content}`);
-  setPhase('verdict', content.toUpperCase().includes('BUILD!') && !content.toUpperCase().includes('NO BUILD') ? 'BUILD!' : 'NO BUILD');
-  await booSpeak(content);
+  // Update ghost card with pivoted idea
+  ghost.originalPitch = ghost.pitch;
+  ghost.pitch = content;
+  dom.ghostPitch.textContent = content;
+  dom.ghostCard.style.borderColor = 'var(--accent)';
 
-  return content.toUpperCase().includes('BUILD') && !content.toUpperCase().includes('NO BUILD');
+  log(`PIVOT: ${content}`);
+  await speak(content, { voiceIndex: 3, rate: 1.15, elVoice: CONFIG.elevenlabs.voices.ghost });
+
+  return content;
 }
 
 // --- OVERDRIVE ---
@@ -158,7 +118,8 @@ async function overdrive(ghost) {
 
   buildLog('OVERDRIVE ENGAGED');
   buildLog(`Building: ${ghost.name}`);
-  buildLog(`Pitch: ${ghost.pitch}`);
+  buildLog(`Original (dud): ${ghost.originalPitch || 'n/a'}`);
+  buildLog(`Pivoted pitch: ${ghost.pitch}`);
   buildLog('');
   buildLog('Generating build spec...');
 
@@ -167,6 +128,7 @@ async function overdrive(ghost) {
     { role: 'user', content: `Build this app: ${ghost.name} — ${ghost.pitch}. It must be a single HTML file with embedded CSS and JS, mobile-friendly, deployable to Cloudflare Pages.` },
   ], { maxTokens: 512, onChunk: (delta) => { dom.buildLog.textContent += delta; dom.buildLog.scrollTop = dom.buildLog.scrollHeight; } });
 
+  buildLog('');
   buildLog('Spec generated');
   buildLog('');
   buildLog('Triggering build agent via Jira...');
@@ -175,10 +137,11 @@ async function overdrive(ghost) {
   buildLog('Waiting for agent to build and deploy...');
   buildLog(`Target: https://${ghost.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}.${CONFIG.overdrive.deployDomain}`);
 
-  await speak(`Overdrive engaged. Building ${ghost.name}. Stand by.`, { rate: 0.9, pitch: 0.7, elVoice: CONFIG.elevenlabs.voices.boo });
+  await speak(`Overdrive engaged. Building ${ghost.name}. The ghost has been redeemed.`, { rate: 0.9, pitch: 0.7, elVoice: CONFIG.elevenlabs.voices.boo });
 }
 
 // --- MAIN SHOW FLOW ---
+// New flow: 1 ghost → dud pitch → crowd feedback → judge feedback → pivot → OVERDRIVE
 async function runShow() {
   state.startTime = Date.now();
   dom.btnStart.style.display = 'none';
@@ -190,61 +153,41 @@ async function runShow() {
   setPhase('intro', 'BOO MC');
   log('Boo taking the stage...');
   await booSpeak(
-    "Welcome, mortals. Startup ghosts are about to pitch you. " +
-    "Cheer if you love it. Boo if you hate it. Silence kills. " +
-    "If a ghost survives... we build it live. Let the haunting begin."
+    "Welcome, mortals. A startup ghost is about to pitch you a terrible idea. " +
+    "Your job? Tell it how to fix it. Cheer, boo, scream your feedback. " +
+    "The judges will roast it. Then the ghost pivots. " +
+    "And if the new idea is good enough... we build it. Live. Right now. " +
+    "Let the haunting begin."
   );
 
+  // Generate ghosts (fan-out still runs, but we pick the first one)
   await generateGhosts();
+  const ghost = state.ghosts[0];
+  state.currentGhostIdx = 0;
 
-  for (let i = 0; i < state.ghosts.length; i++) {
-    state.currentGhostIdx = i;
-    const ghost = state.ghosts[i];
+  // Ghost pitches the dud
+  setPhase('pitch', 'GHOST PITCH');
+  dom.ghostCard.classList.remove('hidden');
+  dom.ghostName.textContent = ghost.name;
+  dom.ghostType.textContent = ghost.type;
+  dom.ghostPitch.textContent = ghost.pitch;
+  log(`Ghost: ${ghost.name}`);
 
-    // Pitch
-    setPhase('pitch', 'GHOST PITCH');
-    dom.ghostCard.classList.remove('hidden');
-    dom.ghostName.textContent = ghost.name;
-    dom.ghostType.textContent = ghost.type;
-    dom.ghostPitch.textContent = ghost.pitch;
-    log(`Ghost ${i + 1}/${state.ghosts.length}: ${ghost.name}`);
+  await speak(`I am ${ghost.name}. ${ghost.pitch}`, { voiceIndex: 1, rate: 1.15, elVoice: CONFIG.elevenlabs.voices.ghost });
 
-    await speak(`I am ${ghost.name}. ${ghost.pitch}`, { voiceIndex: (i * 2 + 1) % 8, rate: 1.15, elVoice: CONFIG.elevenlabs.voices.ghost });
+  // Crowd reacts
+  const crowdScore = await listenToCrowd();
 
-    // Crowd #1
-    const crowd1 = await listenToCrowd();
+  // Judges give feedback (constructive roast)
+  setPhase('feedback', 'JUDGE FEEDBACK');
+  const feedbackSummary = await getJudgeFeedback(ghost, crowdScore);
 
-    if (crowd1.energy < CONFIG.crowd.dudThreshold) {
-      log(`DUD — ghost banished (energy: ${crowd1.energy}%)`);
-      await booSpeak("Banished.");
-      dom.ghostCard.classList.add('hidden');
-      dom.crowdMeter.style.display = 'none';
-      continue;
-    }
+  // Ghost pivots
+  await pivotGhost(ghost, feedbackSummary, crowdScore);
 
-    // Judging Round 1
-    setPhase('judging', 'JUDGING ROUND 1');
-    await judgeGhost(ghost, crowd1, 1);
+  // Boo announces the build
+  await booSpeak("The ghost has spoken. The idea has been reborn. OVERDRIVE.");
 
-    // Crowd #2
-    await booSpeak("Your turn.");
-    const crowd2 = await listenToCrowd();
-
-    // Final Deliberation
-    setPhase('deliberation', 'FINAL DELIBERATION');
-    await judgeGhost(ghost, crowd2, 2);
-
-    // BUILD or NO BUILD
-    const shouldBuild = await decideBuild(ghost, [crowd1, crowd2]);
-
-    if (shouldBuild) {
-      await overdrive(ghost);
-      break;
-    } else {
-      await booSpeak("Next ghost.");
-      dom.ghostCard.classList.add('hidden');
-      dom.judgePanel.classList.add('hidden');
-      dom.crowdMeter.style.display = 'none';
-    }
-  }
+  // OVERDRIVE — build it live
+  await overdrive(ghost);
 }

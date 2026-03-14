@@ -59,13 +59,26 @@ async function generateGhosts() {
     return { model, messages };
   });
 
-  // Fan out — each model gets its own unique prompt
-  log(`Fan-out across ${calls.length} models...`);
-  const promises = calls.map(({ model, messages }) =>
-    llmJSON(model, messages, { temperature: 0.95, maxTokens: 300 })
-      .catch(e => { log(`${model.split('/').pop()} failed: ${e.message}`); return null; })
-  );
-  const results = await Promise.all(promises);
+  // Fan out with concurrency limit (Featherless allows 4 concurrent, keep 1 free)
+  const concurrency = 3;
+  log(`Fan-out across ${calls.length} models (max ${concurrency} concurrent)...`);
+  const results = [];
+  const queue = [...calls];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const { model, messages } = queue.shift();
+      try {
+        const result = await llmJSON(model, messages, { temperature: 0.95, maxTokens: 300, quiet: true });
+        results.push(result);
+      } catch (e) {
+        log(`${model.split('/').pop()} failed: ${e.message}`);
+        results.push(null);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, calls.length) }, () => worker()));
   const successes = results.filter(r => r && r.parsed);
   log(`Fan-out: ${successes.length}/${calls.length} succeeded`);
 
